@@ -673,12 +673,20 @@ static void streamChangedCallback(void * context, int param)
    NxClient_GetDisplaySettings(&displaySettings);
    if(displaySettings.hdmiPreferences.dynamicRangeMode != dynamicRangeMode)
    {
-      displaySettings.hdmiPreferences.dynamicRangeMode= dynamicRangeMode;
-      rc= NxClient_SetDisplaySettings(&displaySettings);
-      if (rc)
+      bool doNotFollowHDRStreamFormat= false;
+      #ifdef NEXUS_HAVE_HDMI_OVERRIDE_MATRIX
+      /* displaySettings.hdmiPreferences.overrideMatrixCoefficients is set in Device Settings HAL to switch between 'follow stream dynrng' or 'force HDR' */
+      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto);
+      #endif
+      if (!doNotFollowHDRStreamFormat)
       {
-         GST_WARNING("unable to set display format using NxClient_SetDisplaySettings (%d)...", rc);
-         return;
+         displaySettings.hdmiPreferences.dynamicRangeMode= dynamicRangeMode;
+         rc= NxClient_SetDisplaySettings(&displaySettings);
+         if (rc)
+         {
+            GST_WARNING("unable to set display format using NxClient_SetDisplaySettings (%d)...", rc);
+            return;
+         }
       }
    }
    #endif
@@ -1924,14 +1932,22 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       NxClient_DisplaySettings displaySettings;
       NxClient_GetDisplaySettings(&displaySettings);
 
-      if (displaySettings.hdmiPreferences.dynamicRangeMode != NEXUS_VideoDynamicRangeMode_eTrackInput)
+      bool doNotFollowHDRStreamFormat= false;
+      #ifdef NEXUS_HAVE_HDMI_OVERRIDE_MATRIX
+      /* displaySettings.hdmiPreferences.overrideMatrixCoefficients is set in Device Settings HAL to switch between 'follow stream dynrng' or 'force HDR' */
+      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto);
+      #endif
+      if (!doNotFollowHDRStreamFormat)
       {
-         NEXUS_VideoDynamicRangeMode tempMode= displaySettings.hdmiPreferences.dynamicRangeMode;
-         displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eSdr;
-         NxClient_SetDisplaySettings(&displaySettings);
-         displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eTrackInput;
-         NxClient_SetDisplaySettings(&displaySettings);
-         GST_INFO("Reset dynamicRangeMode to TrackInput from %d ", tempMode);
+         if (displaySettings.hdmiPreferences.dynamicRangeMode != NEXUS_VideoDynamicRangeMode_eTrackInput)
+         {
+            NEXUS_VideoDynamicRangeMode tempMode= displaySettings.hdmiPreferences.dynamicRangeMode;
+            displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eSdr;
+            NxClient_SetDisplaySettings(&displaySettings);
+            displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eTrackInput;
+            NxClient_SetDisplaySettings(&displaySettings);
+            GST_INFO("Reset dynamicRangeMode to TrackInput from %d ", tempMode);
+         }
       }
    }
    #endif
@@ -1946,14 +1962,23 @@ static void sinkSocStopVideo( GstWesterosSink *sink )
       NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
       #if ((NEXUS_PLATFORM_VERSION_MAJOR >= 18) || (NEXUS_PLATFORM_VERSION_MAJOR >= 17 && NEXUS_PLATFORM_VERSION_MINOR >= 3))
       NxClient_GetDisplaySettings(&displaySettings);
-      if (NEXUS_VideoEotf_eHdr10 == streamInfo.eotf || NEXUS_VideoEotf_eAribStdB67 == streamInfo.eotf)
+
+      bool doNotFollowHDRStreamFormat= false;
+      #ifdef NEXUS_HAVE_HDMI_OVERRIDE_MATRIX
+      /* displaySettings.hdmiPreferences.overrideMatrixCoefficients is set in Device Settings HAL to switch between 'follow stream dynrng' or 'force HDR' */
+      doNotFollowHDRStreamFormat= (displaySettings.hdmiPreferences.overrideMatrixCoefficients == NEXUS_HdmiMatrixCoefficientsMode_eAuto);
+      #endif
+      if (!doNotFollowHDRStreamFormat)
       {
-         NEXUS_VideoDynamicRangeMode tempMode= displaySettings.hdmiPreferences.dynamicRangeMode;
-         displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eSdr;
-         NxClient_SetDisplaySettings(&displaySettings);
-         GST_WARNING("sinkSocStopVideo: reset to SDR from : %d",tempMode);
-         displaySettings.hdmiPreferences.dynamicRangeMode= tempMode;
-         NxClient_SetDisplaySettings(&displaySettings);
+         if (NEXUS_VideoEotf_eHdr10 == streamInfo.eotf || NEXUS_VideoEotf_eAribStdB67 == streamInfo.eotf)
+         {
+            NEXUS_VideoDynamicRangeMode tempMode= displaySettings.hdmiPreferences.dynamicRangeMode;
+            displaySettings.hdmiPreferences.dynamicRangeMode= NEXUS_VideoDynamicRangeMode_eSdr;
+            NxClient_SetDisplaySettings(&displaySettings);
+            GST_WARNING("sinkSocStopVideo: reset to SDR from : %d",tempMode);
+            displaySettings.hdmiPreferences.dynamicRangeMode= tempMode;
+            NxClient_SetDisplaySettings(&displaySettings);
+         }
       }
       #endif
    }
