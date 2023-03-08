@@ -2391,8 +2391,16 @@ static void wstDestroyVideoServerConnection( VideoServerConnection *conn )
 
       if ( conn->threadStarted )
       {
+         int retryCount= 10;
          conn->threadStopRequested= true;
-         pthread_join( conn->threadId, NULL );
+         while( retryCount-- > 0 )
+         {
+            if ( !conn->threadStarted )
+            {
+               break;
+            }
+            usleep( 10000 );
+         }
       }
 
       pthread_mutex_destroy( &conn->mutex );
@@ -3348,8 +3356,16 @@ static void wstDestroyDisplayServerConnection( DisplayServerConnection *conn )
 
       if ( conn->threadStarted )
       {
+         int retryCount= 10;
          conn->threadStopRequested= true;
-         pthread_join( conn->threadId, NULL );
+         while( retryCount-- > 0 )
+         {
+            if ( !conn->threadStarted )
+            {
+               break;
+            }
+            usleep( 10000 );
+         }
       }
 
       pthread_mutex_destroy( &conn->mutex );
