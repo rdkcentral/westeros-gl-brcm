@@ -119,6 +119,8 @@ struct _GstWesterosSinkSoc
    uint32_t numDropped;
    gint64 currentInputPTS;
    gboolean haveHardware;
+   gboolean useTunnelled;
+   gboolean expectDummyBuffers;
    gboolean allow4kZoom;
 
    gboolean updateSession;
