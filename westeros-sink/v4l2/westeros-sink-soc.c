@@ -7622,6 +7622,7 @@ static int ioctl_wrapper( int fd, int request, void* arg )
          case VIDIOC_CROPCAP: req= "VIDIOC_CROPCAP"; break;
          case VIDIOC_CREATE_BUFS: req= "VIDIOC_CREATE_BUFS"; break;
          case VIDIOC_G_SELECTION: req= "VIDIOC_G_SELECTION"; break;
+         case VIDIOC_S_SELECTION: req= "VIDIOC_S_SELECTION"; break;
          case VIDIOC_SUBSCRIBE_EVENT: req= "VIDIOC_SUBSCRIBE_EVENT"; break;
          case VIDIOC_UNSUBSCRIBE_EVENT: req= "VIDIOC_UNSUBSCRIBE_EVENT"; break;
          case VIDIOC_DECODER_CMD: req= "VIDIOC_DECODER_CMD"; break;
@@ -7745,6 +7746,12 @@ static int ioctl_wrapper( int fd, int request, void* arg )
          struct v4l2_decoder_cmd *dcmd= (struct v4l2_decoder_cmd*)arg;
          g_print("westerossink-ioctl: cmd %d\n", dcmd->cmd);
       }
+      else if ( (request == (int)VIDIOC_G_SELECTION) || (request == (int)VIDIOC_S_SELECTION) )
+      {
+         struct v4l2_selection *sel= (struct v4l2_selection*)arg;
+         g_print("westerossink-ioctl: type %d target %d flags %X r %d %d %d %d\n",
+                  sel->type, sel->target, sel->flags, sel->r.left, sel->r.top, sel->r.width, sel->r.height);
+      }
    }
 
    rc= ioctl( fd, request, arg );
@@ -7861,6 +7868,12 @@ static int ioctl_wrapper( int fd, int request, void* arg )
             {
                g_print("westerossink-ioctl: changes %X\n", event->u.src_change.changes );
             }
+         }
+         else if ( (request == (int)VIDIOC_G_SELECTION) || (request == (int)VIDIOC_S_SELECTION) )
+         {
+            struct v4l2_selection *sel= (struct v4l2_selection*)arg;
+            g_print("westerossink-ioctl: type %d target %d flags %X r %d %d %d %d\n",
+                     sel->type, sel->target, sel->flags, sel->r.left, sel->r.top, sel->r.width, sel->r.height);
          }
       }
    }
