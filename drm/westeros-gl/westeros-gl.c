@@ -2012,7 +2012,7 @@ static void *wstVideoServerConnectionThread( void *arg )
                            DEBUG("got hide (%d) video plane %d", hide, conn->videoPlane->plane->plane_id);
                            pthread_mutex_lock( &gMutex );
                            gCtx->dirty= true;
-                           if ( conn->videoPlane->vfm->paused )
+                           if ( conn->videoPlane->vfm->paused || conn->videoPlane->vfm->queueSize < 2 )
                            {
                               gCtx->forceDirty= true;
                               conn->videoPlane->readyToFlip= true;
