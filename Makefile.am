@@ -62,6 +62,10 @@ AM_CXXFLAGS += -DENABLE_LDBPROTOCOL
 AM_CXXFLAGS += -I${PKG_CONFIG_SYSROOT_DIR}/$(includedir)/libdrm
 endif
 
+if ENABLE_WESTEROS_LEXPSYNCPROTOCOL
+AM_CXXFLAGS += -DENABLE_LEXPSYNCPROTOCOL
+endif
+
 if ENABLE_XDG_V4
 AM_CXXFLAGS += -DUSE_XDG_VERSION4 -I$(srcdir)/protocol/version4
 endif
@@ -178,6 +182,11 @@ libwesteros_compositor_la_LDFLAGS= \
    -lwesteros_simpleshell_server \
    -lpthread \
    -ldl
+if ENABLE_WESTEROS_LEXPSYNCPROTOCOL
+libwesteros_compositor_la_SOURCES += linux-expsync/protocol/linux-explicit-synchronization-unstable-v1-protocol.c
+libwesteros_compositor_la_include_HEADERS += linux-expsync/protocol/linux-explicit-synchronization-unstable-v1-server-protocol.h
+libwesteros_compositor_la_CXXFLAGS += -I$(srcdir)/linux-expsync/protocol
+endif
 
 if ENABLE_XDG_V4
 libwesteros_compositor_la_SOURCES += protocol/version4/xdg-shell-protocol.c

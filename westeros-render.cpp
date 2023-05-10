@@ -179,6 +179,16 @@ void WstRendererSurfaceDestroy( WstRenderer *renderer, WstRenderSurface *surface
    renderer->surfaceDestroy( renderer, surface );
 }
 
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+void WstRendererSurfaceImportSync( WstRenderer *renderer, WstRenderSurface *surface, WstExplicitSync *sync)
+{
+   if( renderer->surfaceImportSync)
+   {
+      renderer->surfaceImportSync( renderer, surface, sync );
+   }
+}
+#endif
+
 void WstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *surface, struct wl_resource *resource )
 {
    renderer->surfaceCommit( renderer, surface, resource );

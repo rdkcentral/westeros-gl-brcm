@@ -58,6 +58,18 @@ AC_ARG_ENABLE([nxclient_local],
 AM_CONDITIONAL([NXCLIENT_LOCAL], [test x$NXCLIENT_LOCAL = xtrue])
 AC_SUBST(NXCLIENT_LOCAL)
 
+AC_ARG_ENABLE([brcmwaylandegl],
+              AS_HELP_STRING([--enable-brcmwaylandegl],[enable brcm wayland egl (default is no)]),
+              [
+                case "${enableval}" in
+                 yes) ENABLE_BRCM_WAYLANDEGL=true ;;
+                  no) ENABLE_BRCM_WAYLANDEGL=false ;;
+                   *) AC_MSG_ERROR([bad value ${enableval} for --enable-brcmwaylandegl]) ;;
+                esac
+              ],
+              [echo "use of brcm wayland-egl is disabled"])
+AM_CONDITIONAL([ENABLE_BRCM_WAYLANDEGL], [test x$ENABLE_BRCM_WAYLANDEGL = xtrue])
+
 # Checks for library functions.
 #Add the subdirectories to be considered for building.
 SUBDIRS=" "

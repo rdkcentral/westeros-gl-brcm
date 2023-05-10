@@ -262,6 +262,12 @@ struct _WstRenderSurface
    float cropTextureCoord[4][2];
 
    WstRenderSurface *surfaceFast;
+
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   // import from client per surface
+   // and to provide render_fence_fd via fenced_release
+   WstExplicitSync bufferSync;
+   #endif
 };
 
 typedef struct _WstRendererEMB
@@ -298,6 +304,17 @@ typedef struct _WstRendererEMB
    #ifdef ENABLE_LDBPROTOCOL
    PFNEGLQUERYDMABUFFORMATSEXTPROC eglQueryDmaBufFormatsEXT;
    PFNEGLQUERYDMABUFMODIFIERSEXTPROC eglQueryDmaBufModifiersEXT;
+   #endif
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   bool haveNativeFenceSync;
+   PFNEGLCREATESYNCKHRPROC eglCreateSync;
+   PFNEGLDESTROYSYNCKHRPROC eglDestroySync;
+   PFNEGLDUPNATIVEFENCEFDANDROIDPROC eglDupNativeFenceFd;
+
+   bool haveWaitSync;
+   PFNEGLWAITSYNCKHRPROC eglWaitSync;
+
+   EGLSyncKHR displaySync;
    #endif
 
    WstShader *textureShader;
@@ -355,6 +372,105 @@ static void wstRendererProcessDeadTextures( WstRendererEMB *renderer );
 #define BLUE_SIZE (8)
 #define ALPHA_SIZE (8)
 #define DEPTH_SIZE (0)
+
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+static EGLSyncKHR wstCreateRenderSync(WstRendererEMB *rendererEMB)
+{
+   EGLSyncKHR sync;
+   static const EGLint attribs[] = { EGL_NONE };
+
+   if (!rendererEMB->haveNativeFenceSync || !rendererEMB->eglCreateSync)
+   {
+      return EGL_NO_SYNC_KHR;
+   }
+
+   sync= rendererEMB->eglCreateSync(rendererEMB->eglDisplay, EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
+   if (sync == EGL_NO_SYNC_KHR)
+   {
+      printf("eglCreateSync: Failed to create sync\n");
+   }
+
+   return sync;
+}
+
+static void wstDestroyRenderSync(WstRendererEMB *rendererEMB, EGLSyncKHR sync)
+{
+   if (!rendererEMB->haveNativeFenceSync || !rendererEMB->eglDestroySync)
+   {
+      return;
+   }
+
+   if (sync == EGL_NO_SYNC_KHR)
+   {
+      printf("eglCreateSync: invalid sync to destroy\n");
+   }
+   rendererEMB->eglDestroySync(rendererEMB->eglDisplay, sync);
+}
+
+static int wstCreateFenceFd(WstRendererEMB *rendererEMB, EGLSyncKHR sync)
+{
+   int fd;
+
+   if (sync == EGL_NO_SYNC_KHR || !rendererEMB->eglDupNativeFenceFd)
+   {
+      return -1;
+   }
+
+   fd= rendererEMB->eglDupNativeFenceFd(rendererEMB->eglDisplay, sync);
+   if (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID)
+   {
+      return -1;
+   }
+
+   return fd;
+}
+
+static void wstEnsureSurfaceBufferIsReady(WstRendererEMB *rendererEMB, int fence_fd)
+{
+   EGLSyncKHR sync;
+   EGLint waitRC;
+   EGLint destroyRC;
+   EGLint attribs[]= { EGL_SYNC_NATIVE_FENCE_FD_ANDROID, -1, EGL_NONE };
+
+   if (!rendererEMB->haveNativeFenceSync)
+   {
+      return;
+   }
+
+   if (fence_fd == -1)
+   {
+      printf("Invalid fence fd\n");
+      return;
+   }
+   attribs[1]= dup(fence_fd);
+   if (attribs[1] == -1)
+   {
+      printf("Failed to dup acquire fence\n");
+      return;
+   }
+
+   sync= rendererEMB->eglCreateSync(rendererEMB->eglDisplay, EGL_SYNC_NATIVE_FENCE_ANDROID, attribs);
+   if (sync == EGL_NO_SYNC_KHR)
+   {
+      printf("Failed to create EGLSyncKHR object\n");
+      close(attribs[1]);
+      return;
+   }
+
+   waitRC= rendererEMB->eglWaitSync(rendererEMB->eglDisplay, sync, 0);
+   if (waitRC == EGL_FALSE)
+   {
+      printf("Failed to wait on EGLSyncKHR object\n");
+      /* Continue to try to destroy the sync object. */
+   }
+
+   destroyRC= rendererEMB->eglDestroySync(rendererEMB->eglDisplay, sync);
+   if (destroyRC== EGL_FALSE)
+   {
+      printf("Failed to destroy on EGLSyncKHR object\n");
+   }
+}
+#endif
 
 static WstRendererEMB* wstRendererEMBCreate( WstRenderer *renderer )
 {
@@ -458,6 +574,22 @@ static WstRendererEMB* wstRendererEMBCreate( WstRenderer *renderer )
             printf( "eglQueryDmaBufModifiersEXT %p\n", rendererEMB->eglQueryDmaBufModifiersEXT );
             #endif
          }
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         if ( strstr( extensions, "EGL_KHR_fence_sync") &&
+              strstr( extensions, "EGL_ANDROID_native_fence_sync"))
+         {
+            rendererEMB->haveNativeFenceSync= true;
+            rendererEMB->eglCreateSync= (PFNEGLCREATESYNCKHRPROC)eglGetProcAddress("eglCreateSyncKHR");
+            rendererEMB->eglDestroySync= (PFNEGLDESTROYSYNCKHRPROC)eglGetProcAddress("eglDestroySyncKHR");
+            rendererEMB->eglDupNativeFenceFd= (PFNEGLDUPNATIVEFENCEFDANDROIDPROC) eglGetProcAddress("eglDupNativeFenceFDANDROID");
+            rendererEMB->displaySync= EGL_NO_SYNC_KHR;
+         }
+         if ( strstr( extensions, "EGL_KHR_wait_sync") )
+         {
+            rendererEMB->eglWaitSync = (PFNEGLWAITSYNCKHRPROC)eglGetProcAddress("eglWaitSyncKHR");
+            rendererEMB->haveWaitSync = true;
+         }
+         #endif
       }
       extensions= (const char *)glGetString(GL_EXTENSIONS);
       if ( extensions )
@@ -542,6 +674,10 @@ static WstRenderSurface *wstRendererEMBCreateSurface(WstRendererEMB *renderer)
         surface->zorder= renderer->baseZOrder;
         
         surface->dirty= true;
+
+        #ifdef ENABLE_LEXPSYNCPROTOCOL
+        WstLExpSyncClear(&surface->bufferSync);
+        #endif
         
         if ( renderer->fastPathActive )
         {
@@ -1940,6 +2076,9 @@ static void wstRendererTerm( WstRenderer *renderer )
 static void wstRendererUpdateScene( WstRenderer *renderer )
 {
    WstRendererEMB *rendererEMB= (WstRendererEMB*)renderer->renderer;
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   bool isFenced= false;
+   #endif
    GLuint program;
 
    if ( emitFPS )
@@ -1960,6 +2099,15 @@ static void wstRendererUpdateScene( WstRenderer *renderer )
          frameCount= 0;
       }
    }
+
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   // destroy the previous sync
+   if( rendererEMB->displaySync != EGL_NO_SYNC_KHR )
+   {
+      wstDestroyRenderSync(rendererEMB, rendererEMB->displaySync);
+      rendererEMB->displaySync= EGL_NO_SYNC_KHR;
+   }
+   #endif
 
    wstRendererProcessDeadTextures( rendererEMB );
    
@@ -2055,12 +2203,20 @@ static void wstRendererUpdateScene( WstRenderer *renderer )
           )
         )
       {
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         if( (surface->bufferSync.bufferRelease != NULL) && (surface->bufferSync.acquireFenceFd != -1) )
+         {
+            isFenced = true;
+            wstEnsureSurfaceBufferIsReady(rendererEMB, surface->bufferSync.acquireFenceFd);
+         }
+         #endif
          wstRendererEMBRenderSurface( rendererEMB, surface );
       }
    }
 
    glUseProgram( program );
 
+   #ifndef ENABLE_LEXPSYNCPROTOCOL
    #if defined (WESTEROS_PLATFORM_NEXUS )
    {
       static bool needFinish= (getenv("WAYLAND_EGL_BNXS_ZEROCOPY") == NULL);
@@ -2072,6 +2228,25 @@ static void wstRendererUpdateScene( WstRenderer *renderer )
          glFlush();
          glFinish();
       }
+   }
+   #endif
+   #endif
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   if ( isFenced )
+   {
+      int renderFenceFd;
+      rendererEMB->displaySync= wstCreateRenderSync(rendererEMB);
+      renderFenceFd= wstCreateFenceFd(rendererEMB, rendererEMB->displaySync);
+      for( int i= 0; i < imax; ++i )
+      {
+         WstRenderSurface *surface= rendererEMB->surfaces[i];
+         if ( surface->visible && (surface->bufferSync.bufferRelease != NULL) )
+         {
+            assert( surface->bufferSync.bufferRelease->renderFenceFd == -1 );
+            surface->bufferSync.bufferRelease->renderFenceFd= dup(renderFenceFd);
+         }
+      }
+      close(renderFenceFd);
    }
    #endif
 }
@@ -2114,6 +2289,23 @@ static void wstRendererSurfaceDestroy( WstRenderer *renderer, WstRenderSurface *
    
    wstRendererEMBDestroySurface( rendererEMB, surface );
 }
+
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+static void wstRendererSurfaceImportSync( WstRenderer *renderer, WstRenderSurface *surface, WstExplicitSync *bufferSync)
+{
+   if ( surface )
+   {
+      if( bufferSync )
+      {
+         WstLExpSyncCopy(&surface->bufferSync, bufferSync);
+      }
+      else
+      {
+         WstLExpSyncClear(&surface->bufferSync);
+      }
+   }
+}
+#endif
 
 static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *surface, struct wl_resource *resource )
 {
@@ -2710,6 +2902,9 @@ int renderer_init( WstRenderer *renderer, int argc, char **argv )
       renderer->updateScene= wstRendererUpdateScene;
       renderer->surfaceCreate= wstRendererSurfaceCreate;
       renderer->surfaceDestroy= wstRendererSurfaceDestroy;
+      #ifdef ENABLE_LEXPSYNCPROTOCOL
+      renderer->surfaceImportSync= wstRendererSurfaceImportSync;
+      #endif
       renderer->surfaceCommit= wstRendererSurfaceCommit;
       renderer->surfaceSetVisible= wstRendererSurfaceSetVisible;
       renderer->surfaceGetVisible= wstRendererSurfaceGetVisible;

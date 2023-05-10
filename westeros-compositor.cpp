@@ -61,6 +61,9 @@
 #ifdef ENABLE_LDBPROTOCOL
 #include "linux-dmabuf/westeros-linux-dmabuf.h"
 #endif
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+#include "linux-expsync/westeros-linux-expsync.h"
+#endif
 #include "westeros-simpleshell.h"
 #include "xdg-shell-server-protocol.h"
 #include "vpc-client-protocol.h"
@@ -338,7 +341,14 @@ typedef struct _WstSurface
    struct wl_list frameCallbackList;
    struct wl_listener attachedBufferDestroyListener;
    struct wl_listener detachedBufferDestroyListener;
-   
+
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   struct wl_resource *syncRes;
+   WstExplicitSync createdBufferSync; /* from create to attach */
+   WstExplicitSync attachedBufferSync; /* from attach to commit */
+   WstExplicitSync detachedBufferSync; /* from commit to the next commit */
+   #endif
+
 } WstSurface;
 
 typedef struct _WstSurfaceInfo
@@ -452,6 +462,9 @@ typedef struct _WstContext
    #ifdef ENABLE_LDBPROTOCOL
    struct wl_ldb *ldb;
    #endif
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   struct wl_lexpsync *lexpsync;
+   #endif
    struct wl_simple_shell *simpleShell;
    struct wl_event_source *displayTimer;
 
@@ -532,6 +545,10 @@ typedef struct _WstCompositor
    int eventIndex;
    WstEvent eventQueue[WST_EVENT_QUEUE_SIZE];
 } WstCompositor;
+
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+#include "linux-expsync/westeros-linux-expsync.cpp"
+#endif
 
 static void wstLog( int level, const char *fmt, ... );
 static const char* wstGetNextNestedDisplayName(void);
@@ -793,6 +810,9 @@ static void wstDefaultNestedSurfaceStatus( void *userData, struct wl_surface *su
                                            wl_fixed_t opacity,
                                            wl_fixed_t zorder);
 static void wstSetDefaultNestedListener( WstContext *ctx );
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+static void wstInvalidateImportedSync( WstContext *ctx );
+#endif
 static bool wstSeatInit( WstContext *ctx );
 static void wstSeatItemTerm( WstCompositor *wctx );
 static void wstSeatTerm( WstContext *ctx );
@@ -2574,6 +2594,9 @@ bool WstCompositorComposeEmbedded( WstCompositor *wctx,
          if ( !(hints & WstHints_hidden) )
          {
             WstRendererUpdateScene( ctx->renderer );
+            #ifdef ENABLE_LEXPSYNCPROTOCOL
+            wstInvalidateImportedSync( ctx );
+            #endif
             if ( possibleFirstFrame && wctx->clientCommit && !wctx->clientFirstFrame )
             {
                wctx->clientFirstFrame= true;
@@ -2614,6 +2637,7 @@ bool WstCompositorComposeEmbedded( WstCompositor *wctx,
          *needHolePunch= ( rects.size() > 0 );
       }
 
+      #ifndef ENABLE_LEXPSYNCPROTOCOL
       for (std::vector<WstSurface *>::iterator it = ctx->surfaces.begin(); it != ctx->surfaces.end(); ++it)
       {
          WstSurface *surface= (*it);
@@ -2623,6 +2647,7 @@ bool WstCompositorComposeEmbedded( WstCompositor *wctx,
             pthread_mutex_unlock( &surface->renderMutex );
          }
       }
+      #endif
 
       pthread_mutex_unlock( &ctx->mutex );
       
@@ -3786,6 +3811,15 @@ static void* wstCompositorThread( void *arg )
       goto exit;
    }
 
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   ctx->lexpsync= WstLExpSyncInit( ctx->display, ctx );
+   if ( !ctx->lexpsync )
+   {
+      ERROR("unable to create wl_lexpsync interface");
+      goto exit;
+   }
+   #endif
+
    loop= wl_display_get_event_loop(ctx->display);
    if ( !loop )
    {
@@ -4103,6 +4137,14 @@ static void wstCompositorReleaseResources( WstContext *ctx )
    {
       WstLDBUninit( ctx->ldb );
       ctx->ldb= 0;
+   }
+   #endif
+
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   if ( ctx->lexpsync )
+   {
+      WstLExpSyncUninit( ctx->lexpsync );
+      ctx->lexpsync= 0;
    }
    #endif
 
@@ -4570,6 +4612,9 @@ static void wstCompositorComposeFrame( WstContext *ctx, uint32_t frameTime )
    if ( !ctx->isEmbedded && !ctx->isRepeater )
    {
       WstRendererUpdateScene( ctx->renderer );
+      #ifdef ENABLE_LEXPSYNCPROTOCOL
+      wstInvalidateImportedSync( ctx );
+      #endif
       wstCompositorReleaseDetachedBuffers( ctx );
    }
    
@@ -4714,6 +4759,9 @@ static void wstCompositorReleaseDetachedBuffers( WstContext *ctx )
       WstSurface *surface= (*it);
       if ( surface->detachedBufferResource )
       {
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         WstLExpSyncFireRelease(&surface->detachedBufferSync);
+         #endif
          wl_list_remove(&surface->detachedBufferDestroyListener.link);
          wl_buffer_send_release( surface->detachedBufferResource );
          surface->detachedBufferResource= 0;
@@ -5513,6 +5561,11 @@ static WstSurface* wstSurfaceCreate( WstCompositor *wctx)
       {
          wstSurfaceInsertSurface( ctx, surface );
       }
+      #ifdef ENABLE_LEXPSYNCPROTOCOL
+      WstLExpSyncClear(&surface->createdBufferSync);
+      WstLExpSyncClear(&surface->attachedBufferSync);
+      WstLExpSyncClear(&surface->detachedBufferSync);
+      #endif
    }
    
    return surface;
@@ -5529,21 +5582,44 @@ static void wstSurfaceDestroy( WstSurface *surface )
    if (--surface->refCount > 0)
       return;
 
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   // Invalidate buffer sync sent to gl-render
+   WstRendererSurfaceImportSync( surface->renderer, surface->surface, NULL);
+   if( surface->createdBufferSync.bufferRelease )
+   {
+       // get_release, yet attach and commit
+       struct wl_resource *resource= surface->createdBufferSync.bufferRelease->resource;
+       wl_resource_destroy(resource);
+       WstLExpSyncFdClear(&surface->createdBufferSync.acquireFenceFd);
+   }
+   WstLExpSyncClear(&surface->createdBufferSync);
+   #endif
+
    // Release any attached or detached buffer
    if ( surface->attachedBufferResource || surface->detachedBufferResource )
    {
       if ( surface->detachedBufferResource )
       {
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         WstLExpSyncFireRelease(&surface->detachedBufferSync);
+         #endif
          wl_list_remove(&surface->detachedBufferDestroyListener.link);
          wl_buffer_send_release( surface->detachedBufferResource );
       }
       if ( surface->attachedBufferResource )
       {
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         WstLExpSyncFireRelease(&surface->attachedBufferSync);
+         #endif
          wl_list_remove(&surface->attachedBufferDestroyListener.link);
          wl_buffer_send_release( surface->attachedBufferResource );
       }
       surface->attachedBufferResource= 0;
       surface->detachedBufferResource= 0;
+      #ifdef ENABLE_LEXPSYNCPROTOCOL
+      WstLExpSyncClear(&surface->attachedBufferSync);
+      WstLExpSyncClear(&surface->detachedBufferSync);
+      #endif
    }
 
    // Remove from keyboard focus
@@ -5640,6 +5716,14 @@ static void wstSurfaceDestroy( WstSurface *surface )
          wl_resource_destroy( surface->vpcSurface->resource );
       }
    }
+
+   #ifdef ENABLE_LEXPSYNCPROTOCOL
+   // Cleanup explict sync
+   if ( surface->syncRes )
+   {
+      wl_resource_destroy(surface->syncRes);
+   }
+   #endif
 
    // Cleanup client info for this surface
    for( std::map<struct wl_client*,WstClientInfo*>::iterator it= ctx->clientInfoMap.begin(); it != ctx->clientInfoMap.end(); ++it )
@@ -5895,6 +5979,7 @@ static void wstISurfaceAttach(struct wl_client *client,
    WstSurface *surface= (WstSurface*)wl_resource_get_user_data(resource);
    WstContext *ctx= surface->compositor->ctx;
 
+   #ifndef ENABLE_LEXPSYNCPROTOCOL
    if ( ctx->isEmbedded && bufferResource )
    {
       /* Attempt to keep buffer processing synced to
@@ -5924,12 +6009,16 @@ static void wstISurfaceAttach(struct wl_client *client,
          surface->needsRender= true;
       }
    }
+   #endif
 
    pthread_mutex_lock( &ctx->mutex );
    if ( surface->attachedBufferResource != bufferResource )
    {
       if ( surface->detachedBufferResource )
       {
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         WstLExpSyncFireRelease(&surface->detachedBufferSync);
+         #endif
          wl_list_remove(&surface->detachedBufferDestroyListener.link);
          wl_buffer_send_release( surface->detachedBufferResource );
       }
@@ -5938,6 +6027,9 @@ static void wstISurfaceAttach(struct wl_client *client,
          wl_list_remove(&surface->attachedBufferDestroyListener.link);
       }
       surface->detachedBufferResource= surface->attachedBufferResource;
+      #ifdef ENABLE_LEXPSYNCPROTOCOL
+      WstLExpSyncMove(&surface->detachedBufferSync, &surface->attachedBufferSync);
+      #endif
       if ( surface->detachedBufferResource )
       {
          wl_resource_add_destroy_listener( surface->detachedBufferResource, &surface->detachedBufferDestroyListener );
@@ -5949,6 +6041,10 @@ static void wstISurfaceAttach(struct wl_client *client,
       if ( surface->attachedBufferResource != bufferResource )
       {
          surface->attachedBufferResource= bufferResource;
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         WstLExpSyncMove(&surface->attachedBufferSync, &surface->createdBufferSync);
+         WstLExpSyncClear(&surface->createdBufferSync);
+         #endif
          wl_resource_add_destroy_listener( surface->attachedBufferResource, &surface->attachedBufferDestroyListener );
       }
       surface->attachedX= sx;
@@ -6214,6 +6310,18 @@ static void wstISurfaceCommit(struct wl_client *client, struct wl_resource *reso
       }
       else
       {
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         // set acquire_fence_fd, reset render_fence_fd for fenced_release event
+         if(surface->attachedBufferSync.bufferRelease != NULL)
+         {
+            assert(surface->attachedBufferSync.bufferRelease->renderFenceFd == -1);
+            WstRendererSurfaceImportSync( surface->renderer, surface->surface, &surface->attachedBufferSync);
+         }
+         else
+         {
+            WstRendererSurfaceImportSync( surface->renderer, surface->surface, NULL);
+         }
+         #endif
          WstRendererSurfaceCommit( surface->renderer, surface->surface, surface->attachedBufferResource );
          if ( ctx->hasVpcBridge && surface->vpcSurface && surface->surfaceNested )
          {
@@ -7852,6 +7960,20 @@ static void wstSetDefaultNestedListener( WstContext *ctx )
    ctx->nestedListener.vpcVideoPathChange= wstDefaultNestedVpcVideoPathChange;
    ctx->nestedListener.vpcVideoXformChange= wstDefaultNestedVpcVideoXformChange;
 }
+
+#ifdef ENABLE_LEXPSYNCPROTOCOL
+static void wstInvalidateImportedSync( WstContext *ctx )
+{
+   for ( std::vector<WstSurface*>::iterator it= ctx->surfaces.begin();
+         it != ctx->surfaces.end();
+         ++it )
+   {
+      WstSurface *surface= (*it);
+      // Invalidate buffer sync sent to render preventing further update
+      WstRendererSurfaceImportSync( surface->renderer, surface->surface, NULL);
+   }
+}
+#endif
 
 static bool wstSeatInit( WstContext *ctx )
 {

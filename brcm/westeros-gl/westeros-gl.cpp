@@ -238,7 +238,9 @@ WstGLCtx* WstGLInit()
       ++ctxCount;
       pthread_mutex_unlock( &g_mutex );
 
+      #if ! defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
       NXPL_RegisterNexusDisplayPlatform( &ctx->nxplHandle, 0 );
+      #endif
       printf("WstGLInit: nxplHandle %x\n", ctx->nxplHandle );
       
       BKNI_CreateEvent( &ctx->gfxEvent );
@@ -277,7 +279,11 @@ WstGLCtx* WstGLInit()
          NEXUS_Graphics2D_SetSettings( ctx->gfx, &gfxSettings );
       }
 
+      #if defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
+      if (!ctx->gfx || !ctx->gfxEventCreated || (NEXUS_SUCCESS != rc) )
+      #else
       if ( !ctx->nxplHandle || !ctx->gfx || !ctx->gfxEventCreated || (NEXUS_SUCCESS != rc) )
+      #endif
       {
          WstGLTerm( ctx );
          ctx= 0;
@@ -319,7 +325,9 @@ void WstGLTerm( WstGLCtx *ctx )
       }
       if ( ctx->nxplHandle )
       {
+         #if ! defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
          NXPL_UnregisterNexusDisplayPlatform( ctx->nxplHandle );
+         #endif
          ctx->nxplHandle= 0;
       }
       pthread_mutex_lock( &g_mutex );
@@ -579,7 +587,11 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
          if ( (surfaceStatusIn.width != surfaceStatusNPM.width) ||
               (surfaceStatusIn.height != surfaceStatusNPM.height) )
          {
+            #if defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
+            if(npm->pixmap) NEXUS_Surface_Destroy((NEXUS_SurfaceHandle)npm->pixmap);
+            #else
             NXPL_DestroyCompatiblePixmap(ctx->nxplHandle, npm->pixmap );
+            #endif
             npm->pixmap= 0;
             npm->surface= 0;
          }
@@ -599,17 +611,45 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
             /*
              * Create a new Nexus surface/native pixmap pair
              */   
+            #if defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
+            {
+                NEXUS_SurfaceCreateSettings surfSettings;
+                NEXUS_ClientConfiguration clientConfig;
+
+                NEXUS_Surface_GetDefaultCreateSettings(&surfSettings);
+                NEXUS_Platform_GetClientConfiguration(&clientConfig);
+
+                #ifdef BIG_ENDIAN_CPU
+                surfSettings.pixelFormat = NEXUS_PixelFormat_eR8_G8_B8_A8;
+                #else
+                surfSettings.pixelFormat = NEXUS_PixelFormat_eA8_B8_G8_R8;
+                #endif
+
+                surfSettings.compatibility.graphicsv3d = true;
+                surfSettings.width = surfaceStatusIn.width;
+                surfSettings.height = surfaceStatusIn.height;
+                surfSettings.mipLevel = 0;
+                surfSettings.heap = ctx->secureGraphics ? clientConfig.heap[NXCLIENT_SECURE_GRAPHICS_HEAP] : NEXUS_Platform_GetFramebufferHeap(NEXUS_OFFSCREEN_SURFACE);;
+                surfSettings.alignment = 12; // log2(4096)
+
+                NEXUS_SurfaceHandle nexusSurface = NEXUS_Surface_Create(&surfSettings);
+
+                if (nexusSurface)
+                {
+                    npm->pixmap = nexusSurface;
+                    npm->surface = nexusSurface;
+                }
+                else
+                {
+                    printf("WstGLGetNativePixmap: NXPL_CreateCompatiblePixmapEXT failed\n");
+                    free( npm );
+                    npm= 0;
+                }
+            }
+            #else
             #if NEXUS_PLATFORM_VERSION_MAJOR >= 16
             BEGL_PixmapInfoEXT pixmapInfo;
             NXPL_GetDefaultPixmapInfoEXT(&pixmapInfo);
-
-            if ( ctx->secureGraphics )
-            {
-               pixmapInfo.secure= true;
-            }
-            #else
-            BEGL_PixmapInfo pixmapInfo;
-            #endif
 
             pixmapInfo.width= surfaceStatusIn.width;
             pixmapInfo.height= surfaceStatusIn.height;
@@ -619,9 +659,22 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
             pixmapInfo.format= BEGL_BufferFormat_eA8B8G8R8;
             #endif
 
-            #if NEXUS_PLATFORM_VERSION_MAJOR >= 16
+            if ( ctx->secureGraphics )
+            {
+               pixmapInfo.secure= true;
+            }
+
             if ( !NXPL_CreateCompatiblePixmapEXT(ctx->nxplHandle, &npm->pixmap, &npm->surface, &pixmapInfo) )
             #else
+            BEGL_PixmapInfo pixmapInfo;
+
+            pixmapInfo.width= surfaceStatusIn.width;
+            pixmapInfo.height= surfaceStatusIn.height;
+            #ifdef BIG_ENDIAN_CPU
+            pixmapInfo.format= BEGL_BufferFormat_eR8G8B8A8;
+            #else
+            pixmapInfo.format= BEGL_BufferFormat_eA8B8G8R8;
+            #endif
             if ( !NXPL_CreateCompatiblePixmap(ctx->nxplHandle, &npm->pixmap, &npm->surface, &pixmapInfo) )
             #endif
             {
@@ -629,6 +682,7 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
                free( npm );
                npm= 0;
             }
+            #endif
          }
 
          if ( npm )
@@ -688,7 +742,11 @@ void WstGLReleaseNativePixmap( WstGLCtx *ctx, void *nativePixmap )
       WstNativePixmap *npm= (WstNativePixmap*)nativePixmap;
       if ( npm->pixmap )
       {
+         #if defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
+         NEXUS_Surface_Destroy((NEXUS_SurfaceHandle)npm->pixmap);
+         #else
          NXPL_DestroyCompatiblePixmap(ctx->nxplHandle, npm->pixmap );
+         #endif
          npm->pixmap= 0;
          npm->surface= 0;
       }

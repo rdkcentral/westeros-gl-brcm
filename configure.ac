@@ -151,6 +151,18 @@ AC_ARG_ENABLE([ldbprotocol],
               [echo "zwp_linux_dmabuf_v1 protocol is disabled"])
 AM_CONDITIONAL([ENABLE_WESTEROS_LDBPROTOCOL], [test x$ENABLE_WESTEROS_LDBPROTOCOL = xtrue])
 
+AC_ARG_ENABLE([lexpsyncprotocol],
+              AS_HELP_STRING([--enable-lexpsyncprotocol],[enable linux_explicit_synchronization_unstable_v1 protocol (default is no)]),
+              [
+                case "${enableval}" in
+                 yes) ENABLE_WESTEROS_LEXPSYNCPROTOCOL=true ;;
+                  no) ENABLE_WESTEROS_LEXPSYNCPROTOCOL=false ;;
+                   *) AC_MSG_ERROR([bad value ${enableval} for --enable-lexpsyncprotocol]) ;;
+                esac
+              ],
+              [echo "linux_explicit_synchronization_unstable_v1 protocol is disabled"])
+AM_CONDITIONAL([ENABLE_WESTEROS_LEXPSYNCPROTOCOL], [test x$ENABLE_WESTEROS_LEXPSYNCPROTOCOL = xtrue])
+
 AC_ARG_ENABLE([embedded],
               AS_HELP_STRING([--enable-embedded],[enable westeros platform embedded (default is yes)]),
               [
