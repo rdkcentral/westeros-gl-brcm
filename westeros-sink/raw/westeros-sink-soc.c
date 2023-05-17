@@ -236,14 +236,14 @@ static bool wstApproxEqual( double v1, double v2 )
    bool result= false;
    if ( v1 >= v2 )
    {
-      if ( (v1-v2) < 0.001 )
+      if ( (v1-v2) < 0.01 )
       {
          result= true;
       }
    }
    else
    {
-      if ( (v2-v1) < 0.001 )
+      if ( (v2-v1) < 0.01 )
       {
          result= true;
       }
@@ -2011,7 +2011,7 @@ static void wstGetVideoBounds( GstWesterosSink *sink, int *x, int *y, int *w, in
             }
             #endif
 
-            if ( arf >= ard )
+            if ( (arf >= ard) || wstApproxEqual(arf, ard) )
             {
                if ( wstApproxEqual(arf, ard) && wstApproxEqual( arf, 1.777) )
                {
