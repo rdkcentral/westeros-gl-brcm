@@ -1686,6 +1686,12 @@ static bool essEGLInit( EssCtx *ctx )
    int i;
    
    DEBUG("essEGLInit: displayType %p", ctx->displayType);
+   #ifdef EGL_PLATFORM_WAYLAND_EXT
+   PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT= (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
+   if (ctx->isWayland && eglGetPlatformDisplayEXT)
+      ctx->eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_EXT, (NativeDisplayType)ctx->displayType, NULL);
+   else
+   #endif
    ctx->eglDisplay= eglGetDisplay( ctx->displayType );
    if ( ctx->eglDisplay == EGL_NO_DISPLAY )
    {
