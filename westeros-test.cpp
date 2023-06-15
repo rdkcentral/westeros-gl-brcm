@@ -1356,8 +1356,15 @@ static bool setupEGL( AppCtx *ctx )
     */
    #ifdef EGL_PLATFORM_WAYLAND_EXT
    PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT= (PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
+   printf("eglGetPlatformDisplayEXT %p\n", eglGetPlatformDisplayEXT);
    if (eglGetPlatformDisplayEXT)
+   {
       ctx->eglDisplay = eglGetPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_EXT, (NativeDisplayType)ctx->display, NULL);
+      if ( ctx->eglDisplay == EGL_NO_DISPLAY )
+      {
+         ctx->eglDisplay = eglGetDisplay((NativeDisplayType)ctx->display);
+      }
+   }
    else
    #endif
    ctx->eglDisplay = eglGetDisplay((NativeDisplayType)ctx->display);
