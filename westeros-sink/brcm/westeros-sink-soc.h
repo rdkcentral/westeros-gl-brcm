@@ -62,6 +62,7 @@ struct _GstWesterosSinkSoc
    gboolean usePip;
    gboolean useLowDelay;
    gboolean frameStepOnPreroll;
+   gboolean frameStepping;
    gboolean enableTextureSignal;
    gboolean enableDecodeErrorSignal;
    gint latencyTarget;

@@ -769,6 +769,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.useImmediateOutput= FALSE;
    sink->soc.useLowDelay= FALSE;
    sink->soc.frameStepOnPreroll= FALSE;
+   sink->soc.frameStepping= FALSE;
    sink->soc.enableTextureSignal= FALSE;
    sink->soc.enableDecodeErrorSignal= FALSE;
    sink->soc.latencyTarget= DEFAULT_LATENCY_TARGET;
@@ -3389,12 +3390,15 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
 
    sink->soc.clientPlaySpeed= clientPlaySpeed;
 
+   guint trickRate= (sink->soc.frameStepping || (clientPlaySpeed != 0.0)) ? NEXUS_NORMAL_DECODE_RATE * clientPlaySpeed : NEXUS_NORMAL_DECODE_RATE;
+
    NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
 
    if ( ((clientPlaySpeed != 1.0) && (clientPlaySpeed != 0.0)||(trickState.tsmEnabled == NEXUS_TsmMode_eDisabled)) ||
-        ((trickState.rate != NEXUS_NORMAL_DECODE_RATE) && (trickState.rate != 0)) )
+        ((trickState.rate != NEXUS_NORMAL_DECODE_RATE) && (trickState.rate != 0)) ||
+        (trickState.rate != trickRate) )
    {
-      trickState.rate= NEXUS_NORMAL_DECODE_RATE * clientPlaySpeed;
+      trickState.rate= trickRate;
       trickState.stcTrickEnabled= TRUE;
 
       if ( clientPlaySpeed <= 1.0 )
@@ -3484,26 +3488,18 @@ static void setDecodeMode( GstWesterosSink *sink )
 
 static void frameStep(GstWesterosSink *sink)
 {
-   if ( sink->videoStarted && !sink->soc.videoPlaying && sink->soc.stcChannel )
+   if ( sink->videoStarted && !sink->soc.videoPlaying )
    {
-      NEXUS_VideoDecoderTrickState trickState;
-      NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
-      if ( trickState.rate != 0 )
-      {
-         // trick rate needs to be 0 for Nexus frame advance to work
-         trickState.rate= 0;
-         NEXUS_Error rc = NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
-         if ( NEXUS_SUCCESS != rc )
-         {
-            GST_ERROR_OBJECT(sink, "Error NEXUS_SimpleVideoDecoder_SetTrickState: %d", (int)rc);
-         }
-      }
+      sink->soc.frameStepping= true;
+      updateClientPlaySpeed( sink, 0.0, false );
 
       GST_LOG("calling FrameAdvance");
       if ( NEXUS_SimpleVideoDecoder_FrameAdvance(sink->soc.videoDecoder) )
       {
          GST_ERROR_OBJECT(sink, "Error NEXUS_SimpleVideoDecoder_FrameAdvance");
       }
+      sink->soc.frameStepping= false;
+
       sink->soc.videoPlaying= TRUE;
       UNLOCK( sink );
       updateVideoStatus(sink);
