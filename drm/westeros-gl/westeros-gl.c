@@ -4469,7 +4469,7 @@ static void wstInitUEvent( WstGLCtx *ctx )
          memset(&nlAddr, 0, sizeof(nlAddr));
          nlAddr.nl_family= AF_NETLINK;
          nlAddr.nl_pid= 0;
-         nlAddr.nl_groups= 0xFFFFFFFF;
+         nlAddr.nl_groups= 0x1;
          rc= bind( ctx->ueventFd, (struct sockaddr *)&nlAddr, sizeof(nlAddr));
          if ( !rc )
          {
@@ -4504,6 +4504,7 @@ static void wstProcessUEvent( WstGLCtx *ctx )
          {
             bool drmEvent= false;
             bool hotPlugEvent= false;
+            bool connectorEvent= false;
             for( i= 0; i < rc; )
             {
                char *uevent= &buff[i];
@@ -4515,9 +4516,13 @@ static void wstProcessUEvent( WstGLCtx *ctx )
                {
                   hotPlugEvent= true;
                }
+               else if ( strstr( uevent, "CONNECTOR=" ) )
+               {
+                  connectorEvent= true;
+               }
                i += (strlen(uevent) + 1);
             }
-            if ( drmEvent && hotPlugEvent )
+            if ( drmEvent && hotPlugEvent && !connectorEvent )
             {
                INFO("Hotplug event detected" );
                drmModeFreeConnector(ctx->conn);
