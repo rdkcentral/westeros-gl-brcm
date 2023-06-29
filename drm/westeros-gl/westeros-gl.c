@@ -4488,7 +4488,7 @@ static void wstInitUEvent( WstGLCtx *ctx )
 
 static void wstProcessUEvent( WstGLCtx *ctx )
 {
-   if ( ctx->ueventFd >= 0 )
+   while ( ctx->ueventFd >= 0 )
    {
       struct pollfd pfd;
       pfd.fd= ctx->ueventFd;
@@ -4531,6 +4531,14 @@ static void wstProcessUEvent( WstGLCtx *ctx )
                ctx->forceDirty= true;
             }
          }
+         else
+         {
+            break;
+         }
+      }
+      else
+      {
+         break;
       }
    }
 }
