@@ -1122,6 +1122,7 @@ static void EMDrmDeviceInit( EMDevice *d )
    d->dev.drm.connectors[0].connector_id= ++d->dev.drm.nextId;
    d->dev.drm.connectors[0].encoder_id= d->dev.drm.encoders[0].encoder_id;
    d->dev.drm.connectors[0].connection= DRM_MODE_CONNECTED;
+   d->dev.drm.connectors[0].connector_type= DRM_MODE_CONNECTOR_HDMIA;
    d->dev.drm.connectors[0].count_modes= d->dev.drm.countModes;
    d->dev.drm.connectors[0].modes= d->dev.drm.modes;
 
@@ -2927,13 +2928,44 @@ int EMMunmap( void *addr, size_t length ) __THROW
 int EMPoll( struct pollfd *fds, nfds_t nfds, int timeout )
 {
    int rc= -1;
-   if ( fds->fd >= EM_DEVICE_FD_BASE )
+   bool retry= true;
+   int retryCount= 0;
+   while( retry )
    {
-      rc= EMDevicePoll( fds, nfds, timeout );
-   }
-   else
-   {
-      rc= poll( fds, nfds, timeout );
+      for( int fdi= 0; fdi < nfds; ++fdi )
+      {
+         if ( fds[fdi].fd >= EM_DEVICE_FD_BASE )
+         {
+            rc= EMDevicePoll( &fds[fdi], 1, 0 );
+         }
+         else
+         {
+            rc= poll( &fds[fdi], 1, 0 );
+         }
+         if ( rc )
+         {
+            break;
+         }
+      }
+      if ( timeout == 0 )
+      {
+         retry= false;
+      }
+      if ( timeout > 0 )
+      {
+         if ( ++retryCount > timeout )
+         {
+            retry= false;
+         }
+      }
+      if ( rc )
+      {
+         retry= false;
+      }
+      else if ( timeout != 0 )
+      {
+         usleep( 1000 );
+      }
    }
    return rc;
 }

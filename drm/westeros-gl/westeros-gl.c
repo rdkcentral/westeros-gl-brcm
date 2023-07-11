@@ -7725,19 +7725,31 @@ bool WstGLSetDisplayMode( WstGLCtx *ctx, const char *mode )
             res= drmModeGetResources( ctx->drmFd );
             if ( res )
             {
-               int i;
-               for( i= 0; i < res->count_connectors; ++i )
+               int i, pass;
+               bool foundConnector= false;
+               for( pass= 0; pass < 2; ++pass )
                {
-                  conn= drmModeGetConnector( ctx->drmFd, res->connectors[i] );
-                  if ( conn )
+                  for( i= 0; i < res->count_connectors; ++i )
                   {
-                     if ( conn->count_modes && (conn->connection == DRM_MODE_CONNECTED) )
+                     conn= drmModeGetConnector( ctx->drmFd, res->connectors[i] );
+                     if ( conn )
                      {
-                        break;
+                        if ( conn->count_modes && (conn->connection == DRM_MODE_CONNECTED) )
+                        {
+                           /* Prefer an HDMI connector */
+                           if ( (pass == 1) ||
+                                (conn->connector_type == DRM_MODE_CONNECTOR_HDMIA) ||
+                                (conn->connector_type == DRM_MODE_CONNECTOR_HDMIB) )
+                           {
+                              foundConnector= true;
+                              break;
+                           }
+                        }
+                        drmModeFreeConnector(conn);
+                        conn= 0;
                      }
-                     drmModeFreeConnector(conn);
-                     conn= 0;
                   }
+                  if ( foundConnector ) break;
                }
                if ( conn )
                {
