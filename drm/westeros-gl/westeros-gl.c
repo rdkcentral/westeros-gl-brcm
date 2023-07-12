@@ -425,6 +425,7 @@ typedef struct _WstGLCtx
    bool usingSetDisplayMode;
    bool modeSet;
    bool modeSetPending;
+   bool modeSetSizeChange;
    bool notifySizeChange;
    bool useVideoServer;
    bool usePlanes;
@@ -5638,6 +5639,13 @@ static bool wstCheckPlanes( WstGLCtx *ctx, long long vblankTime, long long vblan
                   sendStatus= true;
                }
             }
+            if ( !ctx->modeSet || ctx->modeSetSizeChange )
+            {
+               DEBUG("mode change: force video update");
+               iter->dirty= true;
+               iter->readyToFlip= true;
+               dirty= true;
+            }
             if ( iter->vfm->underflowDetected )
             {
                iter->vfm->underflowDetected= false;
@@ -6717,6 +6725,7 @@ static void wstSwapDRMBuffers( WstGLCtx *ctx )
       ctx->notifySizeChange= true;
       ctx->modeCurrent= ctx->modeNext;
       ctx->modeSetPending= false;
+      ctx->modeSetSizeChange= false;
       #ifdef DRM_USE_OUT_FENCE
       #ifdef USE_REFRESH_LOCK
       if ( ctx->modeSet && g_useRefreshLock )
@@ -7792,6 +7801,13 @@ bool WstGLSetDisplayMode( WstGLCtx *ctx, const char *mode )
                      ctx->modeNext= conn->modes[miBest];
                      ctx->usingSetDisplayMode= true;
                      ctx->modeSetPending= true;
+                     if ( !ctx->modeInfo ||
+                          (ctx->modeCurrent.hdisplay != ctx->modeNext.hdisplay) ||
+                          (ctx->modeCurrent.vdisplay != ctx->modeNext.vdisplay) )
+                     {
+                        INFO("WstGLSetDisplayMode: mode size change");
+                        ctx->modeSetSizeChange= true;
+                     }
                      pthread_mutex_unlock( &ctx->mutex );
 
                      INFO("WstGLSetDisplayMode: choosing output mode: %dx%dx%d (%s) flags 0x%x",
