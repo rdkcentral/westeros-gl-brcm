@@ -1133,6 +1133,7 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
                      UNLOCK(sink);
                      GST_BASE_SINK(sink)->need_preroll= FALSE;
                      GST_BASE_SINK(sink)->have_preroll= TRUE;
+                     GST_BASE_SINK_PREROLL_SIGNAL(basesink);
                   }
                   else if (!sink->soc.frameOutCount && sink->soc.conn)
                   {
