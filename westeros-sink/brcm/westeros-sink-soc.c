@@ -1883,7 +1883,7 @@ void gst_westeros_sink_soc_eos_event( GstWesterosSink *sink )
    {
       sendEOS= TRUE;
    }
-   else if ( sink->videoStarted )
+   else if ( sink->videoStarted && sink->soc.videoDecoder )
    {
       NEXUS_VideoDecoderStatus videoStatus;
       if ( NEXUS_SUCCESS == NEXUS_SimpleVideoDecoder_GetStatus( sink->soc.videoDecoder, &videoStatus) )
@@ -4547,11 +4547,19 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    NxClient_ConnectSettings connectSettings;
 
    GST_DEBUG("sinkAcquireVideo: enter");
+   LOCK( sink );
    if ( sink->rm && sink->resAssignedId >= 0 )
    {
       if ( swIsSWDecode( sink ) )
       {
          result= 1;
+         goto done;
+      }
+      if ( !sink->soc.surfaceClient )
+      {
+         UNLOCK( sink );
+         result= sinkAcquireResources( sink );
+         LOCK( sink );
          goto done;
       }
       #if (NEXUS_PLATFORM_VERSION_MAJOR>=16)
@@ -4728,7 +4736,6 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
       clientSettings.composition.visible= sink->visible;
       NEXUS_SurfaceClient_SetSettings(sink->soc.videoWindow, &clientSettings);
 
-      LOCK( sink );
       if ( sink->videoStarted )
       {
          GST_DEBUG("sinkAcquireVideo: calling start video");
@@ -4738,7 +4745,6 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
          }
       }
       sink->soc.haveHardware= TRUE;
-      UNLOCK( sink );
 
       result= 1;
    }
@@ -4748,6 +4754,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    }
 
 done:
+   UNLOCK( sink );
    GST_DEBUG("sinkAcquireVideo: exit: %d", result);
 
    return result;
@@ -4756,6 +4763,7 @@ done:
 static void sinkReleaseVideo( GstWesterosSink *sink )
 {
    GST_DEBUG("sinkReleaseVideo: enter");
+   sink->resAssignedId= -1;
    LOCK( sink );
    #if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(20,1)
    if ( sink->soc.saveAllm != ALLM_NOT_SAVED )
