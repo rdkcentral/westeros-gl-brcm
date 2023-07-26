@@ -49,6 +49,8 @@ typedef struct _AppCtx
    int latencyTarget;
    bool useSecureVideo;
    bool useRawSink;
+   bool emitTimeCodes;
+   bool noAudio;
    gfloat rate;
    gfloat zorder;
    bool needToAddStateTimer;
@@ -79,6 +81,8 @@ static void showUsage()
    printf("  -s : secure video\n" );
    printf("  -R <rate> : play with rate\n" );
    printf("  -S : step frame by frame\n" );
+   printf("  -T : time codes\n" );
+   printf("  -M : no audio\n" );
    printf("  -V : video peek\n" );
    printf("  -z <zorder> : video z-order, 0.0 - 1.0\n");
    printf("  -? : show usage\n" );
@@ -235,7 +239,7 @@ gboolean stateChangeTimerTimeout( gpointer userData )
                GstState state, pending;
                g_object_set(G_OBJECT(ctx->westerossink), "frame-step-on-preroll", TRUE, NULL );
                gst_element_send_event( ctx->westerossink,
-                                       gst_event_new_step( GST_FORMAT_BUFFERS, 1, 1.0, TRUE, FALSE) );
+                                       gst_event_new_step( GST_FORMAT_BUFFERS, 1, 1.0, FALSE, FALSE) );
                gst_element_get_state(ctx->pipeline, &state, &pending, 100*1000000);
                g_object_set(G_OBJECT(ctx->westerossink), "frame-step-on-preroll", FALSE, NULL );
                ctx->countDownToStep= TIMEOUTS_PER_STEP;
@@ -320,6 +324,12 @@ static gboolean busCallback(GstBus *bus, GstMessage *message, gpointer data)
     return TRUE;
 }
 
+static void newTimeCode( GstElement *element, guint hours, guint minutes, guint seconds, void *userData )
+{
+   AppCtx *appCtx= (AppCtx*)userData;
+   fprintf(stderr,"Got timecode signal: %02d:%02d:%02d\n", hours, minutes, seconds);
+}
+
 bool createPipeline( AppCtx *ctx )
 {
    bool result= false;
@@ -350,6 +360,11 @@ bool createPipeline( AppCtx *ctx )
       goto exit;
    }
    gst_object_ref( ctx->player );
+
+   if ( ctx->noAudio )
+   {
+      g_object_set(G_OBJECT(ctx->player), "flags", 0x01, NULL );
+   }
 
    if ( ctx->useRawSink )
    {
@@ -398,6 +413,12 @@ bool createPipeline( AppCtx *ctx )
    if ( ctx->stepVideo )
    {
       g_object_set(G_OBJECT(ctx->westerossink), "async", TRUE, NULL );
+   }
+
+   if ( ctx->emitTimeCodes )
+   {
+      g_signal_connect( G_OBJECT(ctx->westerossink), "timecode-callback", G_CALLBACK(newTimeCode), ctx );
+      g_object_set(G_OBJECT(ctx->westerossink), "enable-timecode", TRUE, NULL );
    }
 
    g_object_set(G_OBJECT(ctx->westerossink), "zorder", ctx->zorder, NULL );
@@ -491,6 +512,8 @@ int main( int argc, char **argv )
    bool useLowDelay= false;
    int latencyTarget= 0;
    bool emitPosition= false;
+   bool emitTimeCodes= false;
+   bool noAudio= false;
    bool useSecureVideo= false;
    bool stepVideo= false;
    bool videoPeek= false;
@@ -560,6 +583,12 @@ int main( int argc, char **argv )
             case 'S':
                stepVideo= true;
                break;
+            case 'T':
+               emitTimeCodes= true;
+               break;
+            case 'M':
+               noAudio= true;
+               break;
             case 'V':
                videoPeek= true;
                stepVideo= true;
@@ -623,6 +652,8 @@ int main( int argc, char **argv )
    ctx->useSecureVideo= useSecureVideo;
    ctx->useRawSink= useRawSink;
    ctx->videoRectOverride= videoRect;
+   ctx->emitTimeCodes= emitTimeCodes;
+   ctx->noAudio= noAudio;
    ctx->stepVideo= stepVideo;
    ctx->videoPeek= videoPeek;
    ctx->countDownToStep= TIMEOUTS_PER_STEP;
@@ -696,6 +727,16 @@ int main( int argc, char **argv )
                   remove( "/tmp/wp-play" );
                   gst_element_set_state(ctx->pipeline, GST_STATE_PLAYING);
                }
+               else if ( stat( "/tmp/wp-show", &finfo ) == 0 )
+               {
+                  remove( "/tmp/wp-show" );
+                  g_object_set(G_OBJECT(ctx->westerossink), "show-video-window", TRUE, NULL );
+               }
+               else if ( stat( "/tmp/wp-hide", &finfo ) == 0 )
+               {
+                  remove( "/tmp/wp-hide" );
+                  g_object_set(G_OBJECT(ctx->westerossink), "show-video-window", FALSE, NULL );
+               }
                else if ( stat( "/tmp/wp-zoom", &finfo ) == 0 )
                {
                   static bool full= true;
@@ -711,6 +752,29 @@ int main( int argc, char **argv )
                   }
                   full= !full;
                   g_object_set(G_OBJECT(ctx->westerossink), "window-set", work, NULL );
+               }
+               else if ( stat( "/tmp/wp-peek", &finfo ) == 0 )
+               {
+                  GstState state, pending;
+                  remove( "/tmp/wp-peek" );
+
+                  gst_element_seek( ctx->pipeline,
+                                    1.0,
+                                    GST_FORMAT_TIME,
+                                    (GstSeekFlags)(GST_SEEK_FLAG_FLUSH|GST_SEEK_FLAG_SEGMENT|GST_SEEK_FLAG_ACCURATE),
+                                    GST_SEEK_TYPE_SET, //start type
+                                    0, //start
+                                    GST_SEEK_TYPE_NONE, //stop type
+                                    GST_CLOCK_TIME_NONE //stop
+                                   );
+
+                  usleep( 30000 );
+
+                  g_object_set(G_OBJECT(ctx->westerossink), "frame-step-on-preroll", TRUE, NULL );
+                  gst_element_send_event( ctx->westerossink,
+                                          gst_event_new_step( GST_FORMAT_BUFFERS, 1, 1.0, FALSE, FALSE) );
+                  gst_element_get_state(ctx->pipeline, &state, &pending, 100*1000000);
+                  g_object_set(G_OBJECT(ctx->westerossink), "frame-step-on-preroll", FALSE, NULL );
                }
                usleep( 10000 );
                g_main_context_iteration( NULL, FALSE );
