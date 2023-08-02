@@ -27,6 +27,14 @@
 
 #include "simplebuffer-client-protocol.h"
 
+#ifndef NO_GENERIC_AVSYNC
+#define USE_GENERIC_AVSYNC
+#endif
+
+#ifdef USE_AMLOGIC_MESON
+#undef USE_GENERIC_AVSYNC
+#endif
+
 #define WESTEROS_SINK_CAPS \
       "video/x-raw, " \
       "format=(string) { NV12, I420, YU12 }"
@@ -74,6 +82,25 @@ typedef struct _WstDrmBuffer
    bool localAlloc;
    GstBuffer *gstbuf;
 } WstDrmBuffer;
+
+#ifdef USE_GENERIC_AVSYNC
+typedef struct _AVSyncCtrl
+{
+   pthread_mutex_t mutex;
+   long long sysTime;
+   long long avTime;
+   bool active;
+} AVSyncCtrl;
+
+typedef struct _AVSyncCtx
+{
+   int fd;
+   char name[PATH_MAX];
+   int ctrlSize;
+   AVSyncCtrl *ctrl;
+   GstElement *audioSink;
+} AVSyncCtx;
+#endif
 
 #ifdef USE_GST_AFD
 typedef struct _WstAFDInfo
@@ -168,6 +195,10 @@ struct _GstWesterosSinkSoc
    GThread *firstFrameThread;
    GThread *underflowThread;
    WstDrmBuffer drmBuffer[WST_NUM_DRM_BUFFERS];
+
+   #ifdef USE_GENERIC_AVSYNC
+   AVSyncCtx *avsctx;
+   #endif
 
    #ifdef GLIB_VERSION_2_32 
    GMutex mutex;

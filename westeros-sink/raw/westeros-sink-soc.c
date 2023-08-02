@@ -25,6 +25,7 @@
 #include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -141,6 +142,12 @@ static void sinkReleaseResources( GstWesterosSink *sink );
 static int sinkAcquireVideo( GstWesterosSink *sink );
 static void sinkReleaseVideo( GstWesterosSink *sink );
 static GstStructure *wstSinkGetStats( GstWesterosSink * sink );
+#ifdef USE_GENERIC_AVSYNC
+static void wstPruneAVSyncFiles( GstWesterosSink *sink );
+static AVSyncCtx* wstCreateAVSyncCtx( GstWesterosSink *sink );
+static void wstDestroyAVSyncCtx( GstWesterosSink *sink, AVSyncCtx *avsctx );
+static void wstUpdateAVSyncCtx( GstWesterosSink *sink, AVSyncCtx *avsctx );
+#endif
 
 #ifdef USE_AMLOGIC_MESON
 #ifdef USE_AMLOGIC_MESON_MSYNC
@@ -536,6 +543,9 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.nextDrmBuffer= 0;
    sink->soc.firstFrameThread= NULL;
    sink->soc.underflowThread= NULL;
+   #ifdef USE_GENERIC_AVSYNC
+   sink->soc.avsctx= 0;
+   #endif
    {
       int i;
       for( i= 0; i < WST_NUM_DRM_BUFFERS; ++i )
@@ -603,6 +613,10 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
       int level= atoi( env );
       g_frameDebug= (level > 0 ? true : false);
    }
+
+   #ifdef USE_GENERIC_AVSYNC
+   wstPruneAVSyncFiles( sink );
+   #endif
 
    result= TRUE;
 
@@ -1363,11 +1377,20 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
                      }
                      if ( U && V )
                      {
-                        data= (unsigned char*)mmap( NULL, drmBuff->size[1], PROT_READ | PROT_WRITE, MAP_SHARED, sink->soc.drmFd, drmBuff->offset[1] );
+                        int bi;
+                        int bufferUOffset;
+                        #ifdef USE_SINGLE_BUFFER_NV12
+                        bi= 0;
+                        bufferUOffset= Ystride*sink->soc.frameHeight;
+                        #else
+                        bi= 1;
+                        bufferUOffset= 0;
+                        #endif
+                        data= (unsigned char*)mmap( NULL, drmBuff->size[bi], PROT_READ | PROT_WRITE, MAP_SHARED, sink->soc.drmFd, drmBuff->offset[bi] );
                         if ( data )
                         {
                            int row, col;
-                           unsigned char *dest, *destRow= data;
+                           unsigned char *dest, *destRow= data + bufferUOffset;
                            unsigned char *srcU, *srcURow= U;
                            unsigned char *srcV, *srcVRow= V;
                            for( row= 0; row < sink->soc.frameHeight; row += 2 )
@@ -1380,11 +1403,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
                                  *dest++= *srcU++;
                                  *dest++= *srcV++;
                               }
-                              destRow += drmBuff->pitch[1];
+                              destRow += drmBuff->pitch[bi];
                               srcURow += Ustride;
                               srcVRow += Vstride;
                            }
-                           munmap( data, drmBuff->size[1] );
+                           munmap( data, drmBuff->size[bi] );
                         }
                      }
                   }
@@ -1845,6 +1868,14 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
       g_thread_join( sink->soc.dispatchThread );
       sink->soc.dispatchThread= NULL;
    }
+
+   #ifdef USE_GENERIC_AVSYNC
+   if ( sink->soc.avsctx )
+   {
+      wstDestroyAVSyncCtx( sink, sink->soc.avsctx );
+      sink->soc.avsctx= 0;
+   }
+   #endif
 
    if ( sink->soc.sb )
    {
@@ -2435,6 +2466,11 @@ static void wstSendSessionInfoVideoClientConnection( WstVideoClientConnection *c
       unsigned char mbody[13];
       int len;
       int sentLen;
+      #ifdef USE_GENERIC_AVSYNC
+      struct cmsghdr *cmsg;
+      char cmbody[CMSG_SPACE(sizeof(int))];
+      int fdToSend= -1;
+      #endif
 
       LOCK_CONN( conn );
       msg.msg_name= NULL;
@@ -2452,6 +2488,33 @@ static void wstSendSessionInfoVideoClientConnection( WstVideoClientConnection *c
       mbody[len++]= 'I';
       mbody[len++]= sink->soc.syncType;
       len += putU32( &mbody[len], conn->sink->soc.sessionId );
+      #ifdef USE_GENERIC_AVSYNC
+      if ( sink->soc.avsctx )
+      {
+         fdToSend= fcntl( sink->soc.avsctx->fd, F_DUPFD_CLOEXEC, 0 );
+         if ( fdToSend >= 0 )
+         {
+            int *fd;
+            cmsg= (struct cmsghdr*)cmbody;
+            cmsg->cmsg_len= CMSG_LEN(sizeof(int));
+            cmsg->cmsg_level= SOL_SOCKET;
+            cmsg->cmsg_type= SCM_RIGHTS;
+
+            msg.msg_control= cmsg;
+            msg.msg_controllen= cmsg->cmsg_len;
+
+            fd= (int*)CMSG_DATA(cmsg);
+            fd[0]= fdToSend;
+
+            len += putU32( &mbody[len], sink->soc.avsctx->ctrlSize );
+            mbody[2]= (len-3);
+         }
+         else
+         {
+            GST_ERROR("wstSendSessionInfoVideoClientConnection: failed to dup avsctx fd");
+         }
+      }
+      #endif
 
       iov[0].iov_base= (char*)mbody;
       iov[0].iov_len= len;
@@ -2467,11 +2530,17 @@ static void wstSendSessionInfoVideoClientConnection( WstVideoClientConnection *c
          GST_DEBUG("sent session info: type %d sessionId %d to video server", sink->soc.syncType, sink->soc.sessionId);
          g_print("sent session info: type %d sessionId %d to video server\n", sink->soc.syncType, sink->soc.sessionId);
       }
+      #ifdef USE_GENERIC_AVSYNC
+      if ( fdToSend >= 0 )
+      {
+         close( fdToSend );
+      }
+      #endif
       UNLOCK_CONN( conn );
    }
 }
 
-#ifdef USE_AMLOGIC_MESON
+#if defined USE_AMLOGIC_MESON || defined USE_GENERIC_AVSYNC
 static GstElement* wstFindAudioSink( GstWesterosSink *sink )
 {
    GstElement *audioSink= 0;
@@ -2558,7 +2627,7 @@ static GstElement* wstFindAudioSink( GstWesterosSink *sink )
 
 static void wstSetSessionInfo( GstWesterosSink *sink )
 {
-   #ifdef USE_AMLOGIC_MESON
+   #if defined USE_AMLOGIC_MESON || defined USE_GENERIC_AVSYNC
    if ( sink->soc.conn )
    {
       GstElement *audioSink;
@@ -2601,6 +2670,25 @@ static void wstSetSessionInfo( GstWesterosSink *sink )
       if ( audioSink )
       {
          sink->soc.syncType= 1;
+         #ifdef USE_GENERIC_AVSYNC
+         if ( !gst_base_sink_get_sync(GST_BASE_SINK(sink)) )
+         {
+            if ( sink->soc.avsctx && (sink->soc.avsctx->audioSink != audioSink) )
+            {
+               wstDestroyAVSyncCtx( sink, sink->soc.avsctx );
+               sink->soc.avsctx= 0;
+            }
+            if ( !sink->soc.avsctx )
+            {
+               sink->soc.avsctx= wstCreateAVSyncCtx( sink );
+               syncTypePrev= -1;
+            }
+            if ( sink->soc.avsctx )
+            {
+               sink->soc.avsctx->audioSink= (GstElement*)gst_object_ref(audioSink);
+            }
+         }
+         #endif
          gst_object_unref( audioSink );
       }
       if ( clock )
@@ -3253,6 +3341,9 @@ static gpointer wstEOSDetectionThread(gpointer data)
          displayCount= sink->soc.frameDisplayCount + sink->soc.numDropped;
          videoPlaying= sink->soc.videoPlaying;
          eosEventSeen= sink->eosEventSeen;
+         #ifdef USE_GENERIC_AVSYNC
+         wstUpdateAVSyncCtx( sink, sink->soc.avsctx );
+         #endif
          UNLOCK(sink)
 
          if ( sink->windowChange )
@@ -3456,6 +3547,9 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
       memset( &createDumb, 0, sizeof(createDumb) );
       createDumb.width= width;
       createDumb.height= height;
+      #ifdef USE_SINGLE_BUFFER_NV12
+      createDumb.height += height/2;
+      #endif
       createDumb.bpp= 8;
       rc= ioctl( sink->soc.drmFd, DRM_IOCTL_MODE_CREATE_DUMB, &createDumb );
       if ( rc )
@@ -3483,6 +3577,9 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
          goto exit;
       }
 
+      #ifdef USE_SINGLE_BUFFER_NV12
+      drmBuff->fd[1]= -1;
+      #else
       memset( &createDumb, 0, sizeof(createDumb) );
       createDumb.width= width;
       createDumb.height= height/2;
@@ -3512,6 +3609,7 @@ static bool drmAllocBuffer( GstWesterosSink *sink, int buffIndex, int width, int
          GST_ERROR("drmPrimeHandleToFD failed: rc %d errno %d", rc, errno);
          goto exit;
       }
+      #endif
 
       drmBuff->bufferId= buffIndex;
       drmBuff->localAlloc= true;
@@ -3851,4 +3949,199 @@ static GstStructure *wstSinkGetStats( GstWesterosSink * sink )
       "dropped", G_TYPE_UINT64, (guint64)sink->soc.numDropped,
       "rendered", G_TYPE_UINT64, (guint64)sink->soc.frameDisplayCount, NULL);
 }
+
+#ifdef USE_GENERIC_AVSYNC
+#define AVSYNC_PREFIX "westeros-sink-av-"
+#define AVSYNC_TEMPLATE "/tmp/" AVSYNC_PREFIX "%d-"
+static void wstPruneAVSyncFiles( GstWesterosSink *sink )
+{
+   DIR *dir;
+   struct dirent *result;
+   struct stat fileinfo;
+   int prefixLen;
+   int pid, rc;
+   const char *path;
+   char work[34];
+   path= getenv("XDG_RUNTIME_DIR");
+   if ( path )
+   {
+      if ( NULL != (dir = opendir( path )) )
+      {
+         prefixLen= strlen(AVSYNC_PREFIX);
+         while( NULL != (result = readdir( dir )) )
+         {
+            if ( (result->d_type != DT_DIR) &&
+                !strncmp(result->d_name, AVSYNC_PREFIX, prefixLen) )
+            {
+               snprintf( work, sizeof(work), "%s/%s", path, result->d_name);
+               if ( sscanf( work, AVSYNC_TEMPLATE, &pid ) == 1 )
+               {
+                  // Check if the pid of this temp file is still valid
+                  snprintf(work, sizeof(work), "/proc/%d", pid);
+                  rc= stat( work, &fileinfo );
+                  if ( rc )
+                  {
+                     // The pid is not valid, delete the file
+                     snprintf( work, sizeof(work), "%s/%s", path, result->d_name);
+                     GST_DEBUG("removing temp file: %s", work);
+                     remove( work );
+                  }
+               }
+            }
+         }
+
+         closedir( dir );
+      }
+   }
+}
+
+static AVSyncCtx* wstCreateAVSyncCtx( GstWesterosSink *sink )
+{
+   AVSyncCtx *avsctx= 0;
+   int static count= 0;
+   int pid, len, rc;
+   pthread_mutexattr_t attr;
+   const char *path;
+   char name[PATH_MAX];
+   AVSyncCtrl avsctrl;
+
+   pid= getpid();
+
+   path= getenv("XDG_RUNTIME_DIR");
+   if ( !path )
+   {
+      GST_ERROR("XDG_RUNTIME_DIR is not set");
+      goto exit;
+   }
+
+   len= snprintf( name, PATH_MAX, "%s/%s%d-%d", path, AVSYNC_PREFIX, pid, count ) + 1;
+   if ( len < 0 )
+   {
+      GST_ERROR("error building avs control file name");
+      goto exit;
+   }
+
+   if ( len > PATH_MAX )
+   {
+      GST_ERROR("avs control file name length exceeds max length %d", PATH_MAX );
+      goto exit;
+   }
+
+   rc= pthread_mutexattr_init( &attr );
+   if ( rc )
+   {
+      GST_ERROR("pthread_mutexattr_init failed: %d", rc);
+      goto exit;
+   }
+
+   rc= pthread_mutexattr_setpshared( &attr, PTHREAD_PROCESS_SHARED );
+   if ( rc )
+   {
+      GST_ERROR("pthread_mutexattr_setpshared failed: %d", rc);
+      goto exit;
+   }
+
+   avsctx= (AVSyncCtx*)calloc( 1, sizeof(AVSyncCtx) );
+   if ( avsctx )
+   {
+      avsctx->ctrlSize= sizeof(AVSyncCtrl);
+      strncpy( avsctx->name, name, PATH_MAX);
+
+      avsctx->fd= open( name,
+                       (O_CREAT|O_CLOEXEC|O_RDWR),
+                       (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH) );
+      if ( avsctx->fd < 0 )
+      {
+         GST_ERROR("Error creating avs control file (%s) errno %d", name, errno);
+         goto error_exit;
+      }
+
+      memset( &avsctrl, 0, avsctx->ctrlSize );
+      rc= write( avsctx->fd, &avsctrl, avsctx->ctrlSize );
+      if ( rc < 0 )
+      {
+         GST_ERROR("Error writing avs control file: errno %d", errno);
+         goto error_exit;
+      }
+
+      avsctx->ctrl= (AVSyncCtrl*)mmap( NULL,
+                                       avsctx->ctrlSize,
+                                       PROT_READ|PROT_WRITE,
+                                       MAP_SHARED | MAP_POPULATE,
+                                       avsctx->fd,
+                                       0 //offset
+                                     );
+      if ( avsctx->ctrl == MAP_FAILED )
+      {
+         GST_ERROR("Error from mmmap for avs control file");
+         goto error_exit;
+      }
+
+      rc= pthread_mutex_init( &avsctx->ctrl->mutex, &attr);
+      if ( rc )
+      {
+         GST_ERROR("pthread_mutex_init failed: %d", rc);
+         goto error_exit;
+      }
+   }
+
+   count= count+1;
+
+exit:
+   return avsctx;
+
+error_exit:
+   free( avsctx );
+   avsctx= 0;
+   goto exit;
+}
+
+static void wstDestroyAVSyncCtx( GstWesterosSink *sink, AVSyncCtx *avsctx )
+{
+   if ( avsctx )
+   {
+      if ( avsctx->audioSink )
+      {
+         gst_object_unref( avsctx->audioSink );
+         avsctx->audioSink= 0;
+      }
+      if ( avsctx->ctrl )
+      {
+         pthread_mutex_destroy( &avsctx->ctrl->mutex );
+         munmap( avsctx->ctrl, avsctx->ctrlSize );
+         avsctx->ctrl= 0;
+      }
+      if ( avsctx->fd >= 0 )
+      {
+         close( avsctx->fd );
+         avsctx->fd= -1;
+         if ( remove( avsctx->name ) != 0 )
+         {
+            GST_ERROR("remove failed for avsctx");
+         }
+      }
+      free( avsctx );
+   }
+}
+
+static void wstUpdateAVSyncCtx( GstWesterosSink *sink, AVSyncCtx *avsctx )
+{
+   if ( avsctx && avsctx->ctrl )
+   {
+      if ( avsctx->audioSink )
+      {
+         long long avTime= 0;
+         if ( gst_element_query_position( avsctx->audioSink, GST_FORMAT_TIME, (gint64 *)&avTime ) )
+         {
+            pthread_mutex_lock( &avsctx->ctrl->mutex );
+            avsctx->ctrl->active= (avsctx->ctrl->avTime != avTime/1000LL);
+            avsctx->ctrl->sysTime= g_get_monotonic_time();
+            avsctx->ctrl->avTime= avTime/1000LL;
+            pthread_mutex_unlock( &avsctx->ctrl->mutex );
+            GST_LOG("set avTime %lld active %d\n", avsctx->ctrl->avTime, avsctx->ctrl->active);
+         }
+      }
+   }
+}
+#endif
 
