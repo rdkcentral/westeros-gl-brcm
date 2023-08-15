@@ -6334,6 +6334,12 @@ static void wstISurfaceCommit(struct wl_client *client, struct wl_resource *reso
                                                 0  //height
                                               );
          }
+         #ifdef ENABLE_LEXPSYNCPROTOCOL
+         if ( ctx->isEmbedded )
+         {
+            wstCompositorReleaseDetachedBuffers( ctx );
+         }
+         #endif
       }      
    }
    else
