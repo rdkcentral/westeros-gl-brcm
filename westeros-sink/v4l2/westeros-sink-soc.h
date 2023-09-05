@@ -298,6 +298,7 @@ struct _GstWesterosSinkSoc
    int dvEnhancementLayerPresent;
 
    GstBuffer *prerollBuffer;
+   GstBuffer *lastBuffer;
    gboolean frameStepOnPreroll;
    gboolean forceAspectRatio;
 

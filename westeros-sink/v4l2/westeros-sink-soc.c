@@ -960,6 +960,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.videoY= sink->windowY;
    sink->soc.videoWidth= sink->windowWidth;
    sink->soc.videoHeight= sink->windowHeight;
+   sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    sink->soc.frameStepOnPreroll= FALSE;
    sink->soc.lowMemoryMode= FALSE;
@@ -1965,6 +1966,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
          return;
       }
    }
+   if ( sink->soc.lastBuffer && (sink->soc.lastBuffer == buffer) )
+   {
+      GST_DEBUG("skip double render of buffer %p", buffer);
+      return;
+   }
    if ( (sink->soc.v4l2Fd >= 0) && !sink->flushStarted )
    {
       gint64 nanoTime;
@@ -2239,6 +2245,11 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
 
       ++sink->soc.frameInCount;
 
+      if ( sink->soc.lastBuffer != buffer )
+      {
+         sink->soc.lastBuffer= buffer;
+      }
+
       LOCK(sink);
       if ( !sink->videoStarted && (!sink->rm || sink->resAssignedId >= 0) )
       {
@@ -2298,6 +2309,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.decoderLastFrame= 0;
    sink->soc.decoderEOS= 0;
    sink->soc.videoStartTime= 0;
+   sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
