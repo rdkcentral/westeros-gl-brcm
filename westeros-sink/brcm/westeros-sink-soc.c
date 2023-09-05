@@ -150,6 +150,7 @@ static void swEvent( GstWesterosSink *sink, int id, int p1, void *p2 );
 static void swDisplay( GstWesterosSink *sink, SWFrame *frame );
 static bool establishSource( GstWesterosSink *sink );
 #endif
+static void updateVideoDecoderSettings( GstWesterosSink *sink );
 static int sinkAcquireVideo( GstWesterosSink *sink );
 static void sinkReleaseVideo( GstWesterosSink *sink );
 static int sinkAcquireResources( GstWesterosSink *sink );
@@ -1123,6 +1124,10 @@ void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GV
       case PROP_CAMERA_LATENCY:
          {
             sink->soc.useImmediateOutput= g_value_get_boolean(value);
+            if ( sink->soc.haveHardware )
+            {
+               updateVideoDecoderSettings( sink );
+            }
             break;
          }
       case PROP_FRAME_STEP_ON_PREROLL:
@@ -4540,6 +4545,93 @@ static bool establishSource( GstWesterosSink *sink )
 }
 #endif
 
+static void updateVideoDecoderSettings( GstWesterosSink *sink )
+{
+   NEXUS_Error rc;
+
+   NEXUS_VideoDecoderSettings settings;
+   NEXUS_VideoDecoderExtendedSettings ext_settings;
+   NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
+   NEXUS_SimpleVideoDecoder_GetExtendedSettings(sink->soc.videoDecoder, &ext_settings);
+
+   #if (NEXUS_PLATFORM_VERSION_MAJOR > 16) || ((NEXUS_PLATFORM_VERSION_MAJOR == 16) && (NEXUS_PLATFORM_VERSION_MINOR > 3))
+   settings.scanMode= NEXUS_VideoDecoderScanMode_e1080p;
+   #endif
+   // Don't enable zeroDelayOutputMode since this combined with
+   // NEXUS_VideoDecoderTimestampMode_eDisplay will cause the capture
+   // to omit all out of order frames (ie. all B-Frames)
+   settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMute;  // mute until TSM to prevent display in paused/framestep case, NF VPEEK
+   settings.ptsOffset= sink->soc.ptsOffset;
+   settings.fifoEmpty.callback= sink->soc.useImmediateOutput ? NULL : underflowCallback;
+   settings.fifoEmpty.context= sink;
+   settings.firstPts.callback= firstPtsCallback;
+   settings.firstPts.context= sink;
+   settings.ptsError.callback= ptsErrorCallback;
+   settings.ptsError.context= sink;
+   #if (NEXUS_PLATFORM_VERSION_MAJOR > 15) || ((NEXUS_PLATFORM_VERSION_MAJOR == 15) && (NEXUS_PLATFORM_VERSION_MINOR > 2))
+   settings.streamChanged.callback= streamChangedCallback;
+   settings.streamChanged.context= sink;
+   #endif
+   ext_settings.dataReadyCallback.callback= NULL;
+   ext_settings.dataReadyCallback.context= NULL;
+   ext_settings.zeroDelayOutputMode= false;
+   if ( sink->soc.useLowDelay )
+   {
+      ext_settings.lowLatencySettings.mode= NEXUS_VideoDecoderLowLatencyMode_eAverage;
+      ext_settings.lowLatencySettings.latency= sink->soc.latencyTarget;
+      printf("westerossink: using low delay (target %d ms)\n", sink->soc.latencyTarget);
+   }
+   if ( sink->soc.useImmediateOutput )
+   {
+      ext_settings.zeroDelayOutputMode= true;
+      ext_settings.ignoreDpbOutputDelaySyntax= true;
+      ext_settings.earlyPictureDeliveryMode= true;
+      #ifdef NEXUS_LOWLATENCY_GAMING_API_BACKPORT
+      ext_settings.lowLatencySettings.mode= NEXUS_VideoDecoderLowLatencyMode_eGaming;
+      #endif
+      printf("westerossink: using immediate output mode\n");
+   }
+   ext_settings.treatIFrameAsRap= true;
+   ext_settings.ignoreNumReorderFramesEqZero= true;
+
+   rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
+   if ( rc != NEXUS_SUCCESS )
+   {
+      GST_WARNING("updateVideoDecoderSettings: NEXUS_SimpleVideoDecoder_SetSettings failed rc %d", rc);
+   }
+   rc= NEXUS_SimpleVideoDecoder_SetExtendedSettings(sink->soc.videoDecoder, &ext_settings);
+   if ( rc != NEXUS_SUCCESS )
+   {
+      GST_WARNING("updateVideoDecoderSettings: NEXUS_SimpleVideoDecoder_SetExtendedSettings failed rc %d", rc);
+   }
+
+   #if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(20,1)
+   if (sink->soc.useLowDelay || sink->soc.useImmediateOutput)
+   {  /* reduce BVN delay */
+      NEXUS_SimpleVideoDecoderClientSettings clientSettings;
+      NEXUS_SimpleVideoDecoder_GetClientSettings(sink->soc.videoDecoder, &clientSettings);
+      clientSettings.mtgAllowed= false;
+      clientSettings.captureMode= NEXUS_VideoWindowCaptureMode_eOff;
+      rc= NEXUS_SimpleVideoDecoder_SetClientSettings(sink->soc.videoDecoder, &clientSettings);
+      if ( rc != NEXUS_SUCCESS )
+      {
+         GST_WARNING("updateVideoDecoderSettings: NEXUS_SimpleVideoDecoder_SetClientSettings failed rc %d", rc);
+      }
+
+      NxClient_DisplaySettings displaySettings;
+      NxClient_GetDisplaySettings(&displaySettings);
+      sink->soc.saveAllm= displaySettings.hdmiPreferences.allm ? ALLM_TRUE : ALLM_FALSE;
+      displaySettings.hdmiPreferences.allm= true;
+      GST_LOG("updateVideoDecoderSettings: settings displaySettings.hdmiPreferences.allm %d", displaySettings.hdmiPreferences.allm);
+      rc = NxClient_SetDisplaySettings(&displaySettings);
+      if ( rc != NEXUS_SUCCESS )
+      {
+         GST_WARNING("updateVideoDecoderSettings: NxClient_SetDisplaySettings failed rc %d", rc);
+      }
+   }
+   #endif
+}
+
 static int sinkAcquireVideo( GstWesterosSink *sink )
 {
    int result= 0;
@@ -4632,88 +4724,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    if ( rc == NEXUS_SUCCESS )
    {
       sink->soc.presentationStarted= FALSE;
-
-      NEXUS_VideoDecoderSettings settings;
-      NEXUS_VideoDecoderExtendedSettings ext_settings;
-      NEXUS_SimpleVideoDecoder_GetSettings(sink->soc.videoDecoder, &settings);
-      NEXUS_SimpleVideoDecoder_GetExtendedSettings(sink->soc.videoDecoder, &ext_settings);
-
-      #if (NEXUS_PLATFORM_VERSION_MAJOR > 16) || ((NEXUS_PLATFORM_VERSION_MAJOR == 16) && (NEXUS_PLATFORM_VERSION_MINOR > 3))
-      settings.scanMode= NEXUS_VideoDecoderScanMode_e1080p;
-      #endif
-      // Don't enable zeroDelayOutputMode since this combined with
-      // NEXUS_VideoDecoderTimestampMode_eDisplay will cause the capture
-      // to omit all out of order frames (ie. all B-Frames)
-      settings.channelChangeMode= NEXUS_VideoDecoder_ChannelChangeMode_eMute;  // mute until TSM to prevent display in paused/framestep case, NF VPEEK
-      settings.ptsOffset= sink->soc.ptsOffset;
-      settings.fifoEmpty.callback= sink->soc.useImmediateOutput ? NULL : underflowCallback;
-      settings.fifoEmpty.context= sink;
-      settings.firstPts.callback= firstPtsCallback;
-      settings.firstPts.context= sink;
-      settings.ptsError.callback= ptsErrorCallback;
-      settings.ptsError.context= sink;
-      #if (NEXUS_PLATFORM_VERSION_MAJOR > 15) || ((NEXUS_PLATFORM_VERSION_MAJOR == 15) && (NEXUS_PLATFORM_VERSION_MINOR > 2))
-      settings.streamChanged.callback= streamChangedCallback;
-      settings.streamChanged.context= sink;
-      #endif
-      ext_settings.dataReadyCallback.callback= NULL;
-      ext_settings.dataReadyCallback.context= NULL;
-      ext_settings.zeroDelayOutputMode= false;
-      if ( sink->soc.useLowDelay )
-      {
-         ext_settings.lowLatencySettings.mode= NEXUS_VideoDecoderLowLatencyMode_eAverage;
-         ext_settings.lowLatencySettings.latency= sink->soc.latencyTarget;
-         printf("westerossink: using low delay (target %d ms)\n", sink->soc.latencyTarget);
-      }
-      if ( sink->soc.useImmediateOutput )
-      {
-         ext_settings.zeroDelayOutputMode= true;
-         ext_settings.ignoreDpbOutputDelaySyntax= true;
-         ext_settings.earlyPictureDeliveryMode= true;
-         #ifdef NEXUS_LOWLATENCY_GAMING_API_BACKPORT
-         ext_settings.lowLatencySettings.mode= NEXUS_VideoDecoderLowLatencyMode_eGaming;
-         #endif
-         printf("westerossink: using immediate output mode\n");
-      }
-      ext_settings.treatIFrameAsRap= true;
-      ext_settings.ignoreNumReorderFramesEqZero= true;
-
-      rc= NEXUS_SimpleVideoDecoder_SetSettings(sink->soc.videoDecoder, &settings);
-      if ( rc != NEXUS_SUCCESS )
-      {
-         GST_WARNING("sinkAcquireVideo: NEXUS_SimpleVideoDecoder_SetSettings failed rc %d", rc);
-      }
-      rc= NEXUS_SimpleVideoDecoder_SetExtendedSettings(sink->soc.videoDecoder, &ext_settings);
-      if ( rc != NEXUS_SUCCESS )
-      {
-         GST_WARNING("sinkAcquireVideo: NEXUS_SimpleVideoDecoder_SetExtendedSettings failed rc %d", rc);
-      }
-
-      #if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(20,1)
-      if (sink->soc.useLowDelay || sink->soc.useImmediateOutput)
-      {  /* reduce BVN delay */
-         NEXUS_SimpleVideoDecoderClientSettings clientSettings;
-         NEXUS_SimpleVideoDecoder_GetClientSettings(sink->soc.videoDecoder, &clientSettings);
-         clientSettings.mtgAllowed= false;
-         clientSettings.captureMode= NEXUS_VideoWindowCaptureMode_eOff;
-         rc= NEXUS_SimpleVideoDecoder_SetClientSettings(sink->soc.videoDecoder, &clientSettings);
-         if ( rc != NEXUS_SUCCESS )
-         {
-            GST_WARNING("sinkAcquireVideo: NEXUS_SimpleVideoDecoder_SetClientSettings failed rc %d", rc);
-         }
-
-         NxClient_DisplaySettings displaySettings;
-         NxClient_GetDisplaySettings(&displaySettings);
-         sink->soc.saveAllm= displaySettings.hdmiPreferences.allm ? ALLM_TRUE : ALLM_FALSE;
-         displaySettings.hdmiPreferences.allm= true;
-         GST_LOG("sinkAcquireVideo: settings displaySettings.hdmiPreferences.allm %d", displaySettings.hdmiPreferences.allm);
-         rc = NxClient_SetDisplaySettings(&displaySettings);
-         if ( rc != NEXUS_SUCCESS )
-         {
-            GST_WARNING("sinkAcquireVideo: NxClient_SetDisplaySettings failed rc %d", rc);
-         }
-      }
-      #endif
+      updateVideoDecoderSettings( sink );
 
       if ( sink->soc.usePip )
       {
