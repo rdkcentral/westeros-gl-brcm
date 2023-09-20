@@ -2540,8 +2540,11 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
                }
             }
          }
-         wstSendRectVideoClientConnection(sink->soc.conn);
       }
+   }
+   if ( needUpdate )
+   {
+      wstSendRectVideoClientConnection(sink->soc.conn);
    }
 }
 
