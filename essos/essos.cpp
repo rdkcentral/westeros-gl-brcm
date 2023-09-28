@@ -4098,6 +4098,7 @@ static void essFreeInputDevices( EssCtx *ctx )
       {
          it= ctx->inputDevices.erase( it );
          essFreeInputDevice( idev );
+         continue;
       }
       ++it;
    }
