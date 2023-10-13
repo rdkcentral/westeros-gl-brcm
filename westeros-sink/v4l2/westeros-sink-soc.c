@@ -977,6 +977,7 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.haveContentLightLevel= FALSE;
    sink->soc.dvBaseLayerPresent= -1;
    sink->soc.dvEnhancementLayerPresent= -1;
+   sink->soc.svp= 0;
    #ifdef USE_GENERIC_AVSYNC
    sink->soc.avsctx= 0;
    #endif
@@ -1427,6 +1428,10 @@ gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *p
 
    avProgInit();
 
+   #ifdef WESTEROS_SINK_SVP
+   wstSVPInit( sink );
+   #endif
+
    result= TRUE;
 
    return result;
@@ -1576,6 +1581,10 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
 
    sink->soc.keepLastFrame= keepLastFrame;
 
+   #ifdef WESTEROS_SINK_SVP
+   wstSVPTerm( sink );
+   #endif
+
    avProgTerm();
 
    *passToDefault= false;
@@ -1669,24 +1678,7 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
       {
          gint num, denom, width, height;
          double pixelAspectRatioNext;
-         gboolean dv_bl_present_flag, dv_el_present_flag;
 
-         if (gst_structure_get_boolean( structure, "dv_bl_present_flag", &dv_bl_present_flag))
-         {
-            sink->soc.dvBaseLayerPresent= dv_bl_present_flag?1:0;
-         }
-         else
-         {
-            sink->soc.dvBaseLayerPresent= -1;
-         }
-         if (gst_structure_get_boolean( structure, "dv_el_present_flag", &dv_el_present_flag))
-         {
-            sink->soc.dvEnhancementLayerPresent= dv_el_present_flag?1:0;
-         }
-         else
-         {
-            sink->soc.dvEnhancementLayerPresent= -1;
-         }
          if ( gst_structure_get_fraction( structure, "framerate", &num, &denom ) )
          {
             if ( denom == 0 ) denom= 1;
@@ -1922,6 +1914,10 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
                }
             }
          }
+
+         #ifdef WESTEROS_SINK_SVP
+         wstSVPAcceptCaps( sink, caps );
+         #endif
 
          if ( frameSizeChange && (sink->soc.hasEvents == FALSE) )
          {

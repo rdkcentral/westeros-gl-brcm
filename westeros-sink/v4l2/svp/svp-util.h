@@ -21,8 +21,11 @@
 
 #define WESTEROS_SINK_SVP
 
+static void wstSVPInit( GstWesterosSink *sink );
+static void wstSVPTerm( GstWesterosSink *sink );
 static void wstSVPSetInputMemMode( GstWesterosSink *sink, int mode );
 static void wstSVPSetOutputMemMode( GstWesterosSink *sink, int mode );
+static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps );
 static void wstSVPDecoderConfig( GstWesterosSink *sink );
 static bool wstSVPSetupOutputBuffersDmabuf( GstWesterosSink *sink );
 static void wstSVPTearDownOutputBuffersDmabuf( GstWesterosSink *sink );

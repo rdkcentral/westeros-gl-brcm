@@ -308,6 +308,8 @@ struct _GstWesterosSinkSoc
    int dwMode;
    int drmFd;
 
+   void *svp;
+
    #ifdef USE_GENERIC_AVSYNC
    AVSyncCtx *avsctx;
    #endif

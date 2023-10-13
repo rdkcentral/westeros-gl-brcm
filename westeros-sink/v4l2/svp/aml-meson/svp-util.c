@@ -211,6 +211,44 @@ exit:
    return result;
 }
 
+static void wstSVPInit( GstWesterosSink *sink )
+{
+   /* Any needed initialization and allocate state data */
+}
+
+static void wstSVPTerm( GstWesterosSink *sink )
+{
+   /* Any needed cleanup */
+}
+
+static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
+{
+   GstStructure *structure;
+
+   structure= gst_caps_get_structure(caps, 0);
+   if( structure )
+   {
+      gboolean dv_bl_present_flag, dv_el_present_flag;
+
+      if (gst_structure_get_boolean( structure, "dv_bl_present_flag", &dv_bl_present_flag))
+      {
+         sink->soc.dvBaseLayerPresent= dv_bl_present_flag?1:0;
+      }
+      else
+      {
+         sink->soc.dvBaseLayerPresent= -1;
+      }
+      if (gst_structure_get_boolean( structure, "dv_el_present_flag", &dv_el_present_flag))
+      {
+         sink->soc.dvEnhancementLayerPresent= dv_el_present_flag?1:0;
+      }
+      else
+      {
+         sink->soc.dvEnhancementLayerPresent= -1;
+      }
+   }
+}
+
 static void wstSVPDecoderConfig( GstWesterosSink *sink )
 {
    int rc;
