@@ -179,6 +179,7 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
 static void wstSendFrameAdvanceVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendKeepFrameVideoClientConnection( WstVideoClientConnection *conn );
+static void wstWaitForLastFrame( GstWesterosSink *sink );
 static void wstDecoderReset( GstWesterosSink *sink, bool hard );
 static void wstGetVideoBounds( GstWesterosSink *sink, int *x, int *y, int *w, int *h );
 static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, int vh );
@@ -1599,6 +1600,8 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
    const gchar *mime;
    int len;
    bool frameSizeChange= false;
+   uint32_t inputFormatPrev= sink->soc.inputFormat;
+   bool codecChange= false;
 
    gchar *str= gst_caps_to_string(caps);
    g_print("westeros-sink: caps: (%s)\n", str);
@@ -1671,6 +1674,12 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
          else
          {
             GST_ERROR("gst_westeros_sink_soc_accept_caps: not accepting caps (%s)", mime );
+         }
+
+         if ( (inputFormatPrev != 0) &&
+              (inputFormatPrev != sink->soc.inputFormat) )
+         {
+            codecChange= true;
          }
       }
 
@@ -1919,9 +1928,13 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
          wstSVPAcceptCaps( sink, caps );
          #endif
 
-         if ( frameSizeChange && (sink->soc.hasEvents == FALSE) )
+         if ( (frameSizeChange && (sink->soc.hasEvents == FALSE)) || codecChange )
          {
-            g_print("westeros-sink: frame size change : %dx%d\n", sink->soc.frameWidth, sink->soc.frameHeight);
+            g_print("westeros-sink: input change : frame %dx%d format 0x%08X\n", sink->soc.frameWidth, sink->soc.frameHeight, sink->soc.inputFormat);
+            if ( codecChange )
+            {
+               wstWaitForLastFrame( sink );
+            }
             wstDecoderReset( sink, true );
             if ( sink->soc.v4l2Fd >= 0 )
             {
@@ -5649,6 +5662,74 @@ exit:
       }
    }
    return result;
+}
+
+static void wstWaitForLastFrame( GstWesterosSink *sink )
+{
+   int rc;
+   double frameRate;
+   int count;
+   int decoderEOS, decoderEOSPrev, displayCount;
+   bool videoPlaying, flushStarted;
+
+   if ( sink->soc.frameInCount > 2 )
+   {
+      if ( sink->soc.hasEOSEvents && !sink->soc.expectNoLastFrame )
+      {
+         struct v4l2_decoder_cmd dcmd;
+
+         memset( &dcmd, 0, sizeof(dcmd));
+
+         GST_DEBUG("need last frame: issuing decoder stop");
+         dcmd.cmd= V4L2_DEC_CMD_STOP;
+         rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_DECODER_CMD, &dcmd );
+         if ( rc )
+         {
+            GST_DEBUG("VIDIOC_DECODER_CMD V4L2_DEC_CMD_STOP rc %d errno %d",rc, errno);
+         }
+      }
+      else
+      {
+         GST_DEBUG("set decoderEOS");
+         sink->soc.decoderEOS= 1;
+      }
+      LOCK(sink)
+      frameRate= (sink->soc.frameRate > 0.0 ? sink->soc.frameRate : 30.0);
+      UNLOCK(sink)
+      GST_DEBUG("wait for last frame...");
+      while( !sink->soc.quitVideoOutputThread )
+      {
+         usleep( 1000000/frameRate );
+
+         if ( !sink->soc.quitVideoOutputThread )
+         {
+            LOCK(sink)
+            count= sink->soc.frameOutCount;
+            displayCount= sink->soc.frameDisplayCount + sink->soc.numDropped;
+            decoderEOSPrev= decoderEOS;
+            decoderEOS= sink->soc.decoderEOS;
+            videoPlaying= sink->soc.videoPlaying;
+            flushStarted= sink->flushStarted;
+            UNLOCK(sink)
+            GST_DEBUG("waiting for last: frameOutCount %d displayCount %d (%d+%d)", count, displayCount, sink->soc.frameDisplayCount, sink->soc.numDropped);
+            if ( videoPlaying && decoderEOS && !decoderEOSPrev )
+            {
+               wstSendEosVideoClientConnection( sink->soc.conn );
+            }
+            if ( videoPlaying && decoderEOS && (count <= displayCount) )
+            {
+               GST_DEBUG("have last frame");
+               break;
+            }
+            if ( flushStarted )
+            {
+               GST_DEBUG("detect flush");
+               break;
+            }
+         }
+      }
+      GST_DEBUG("done wait for last frame");
+   }
 }
 
 static void wstDecoderReset( GstWesterosSink *sink, bool hard )
