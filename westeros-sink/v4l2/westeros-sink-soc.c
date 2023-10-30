@@ -6603,11 +6603,11 @@ capture_start:
       }
       else if ( sink->soc.videoPaused && !sink->soc.frameAdvance )
       {
+         LOCK(sink);
+         wstProcessMessagesVideoClientConnection( sink->soc.conn );
          if ( !wasPaused )
          {
-            LOCK(sink);
             wstSendPauseVideoClientConnection( sink->soc.conn, true);
-            UNLOCK(sink);
          }
          wasPaused= true;
          if ( sink->windowChange )
@@ -6628,6 +6628,7 @@ capture_start:
                wstSendHideVideoClientConnection( sink->soc.conn, !sink->show );
             }
          }
+         UNLOCK(sink);
 
          if ( sink->soc.pauseException )
          {
