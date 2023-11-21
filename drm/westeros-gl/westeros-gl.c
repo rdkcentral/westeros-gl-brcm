@@ -546,6 +546,7 @@ static WstGLCtx *gCtx= 0;
 static WstGLSizeCBInfo *gSizeListeners= 0;
 static VideoServerCtx *gVideoServer= 0;
 static DisplayServerCtx *gDisplayServer= 0;
+static bool gGraphicsActualSize= false;
 static int gGraphicsMaxWidth= 0;
 static int gGraphicsMaxHeight= 0;
 static bool g_emitFPS= false;
@@ -2922,6 +2923,14 @@ static void wstDisplayServerProcessMessage( DisplayServerConnection *conn, int m
                            pthread_mutex_unlock( &gMutex );
                            sprintf( conn->response, "%d: graphics enable %d", 0, enabled );
                         }
+                        else if ( (tlen == 11) && !strncmp( tok, "actual-size", tlen ) )
+                        {
+                           bool enabled;
+                           pthread_mutex_lock( &gMutex );
+                           enabled= gGraphicsActualSize;
+                           pthread_mutex_unlock( &gMutex );
+                           sprintf( conn->response, "%d: graphics actual-size %d", 0, enabled );
+                        }
                      }
                      else
                      {
@@ -3090,6 +3099,36 @@ static void wstDisplayServerProcessMessage( DisplayServerConnection *conn, int m
                            else
                            {
                               sprintf( conn->response, "%d: %s", -1, "set graphics enable missing argument(s)" );
+                           }
+                        }
+                        else if ( (tlen == 11) && !strncmp( tok, "actual-size", tlen) )
+                        {
+                           tok= strtok_r( 0, " ", &ctx );
+                           if ( tok )
+                           {
+                              int value= -1;
+                              tlen= strlen( tok );
+                              if ( (tlen == 1) && !strncmp( tok, "0", tlen) )
+                              {
+                                 value= 0;
+                              }
+                              else if ( (tlen == 1) && !strncmp( tok, "1", tlen) )
+                              {
+                                 value= 1;
+                              }
+                              if ( value >= 0 )
+                              {
+                                 pthread_mutex_lock( &gMutex );
+                                 gGraphicsActualSize= ((value != 0) ? true : false);
+                                 gCtx->dirty= true;
+                                 gCtx->forceDirty= true;
+                                 pthread_mutex_unlock( &gMutex );
+                                 sprintf( conn->response, "%d: graphics set actual-size %d", 0, value );
+                              }
+                           }
+                           else
+                           {
+                              sprintf( conn->response, "%d: %s", -1, "set graphics actual-size missing argument(s)" );
                            }
                         }
                         else
@@ -6400,6 +6439,17 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
 
                if ( ctx->outputEnable )
                {
+                  int crtcW, crtcH;
+                  if ( gGraphicsActualSize )
+                  {
+                     crtcW= nw->width;
+                     crtcH= nw->height;
+                  }
+                  else
+                  {
+                     crtcW= ctx->modeInfo->hdisplay;
+                     crtcH= ctx->modeInfo->vdisplay;
+                  }
                   wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
                                         nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
                                         "FB_ID", nw->fbId );
@@ -6443,11 +6493,11 @@ static void wstSwapDRMBuffersAtomic( WstGLCtx *ctx )
 
                   wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
                                         nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
-                                        "CRTC_W", ctx->modeInfo->hdisplay );
+                                        "CRTC_W", crtcW );
 
                   wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
                                         nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
-                                        "CRTC_H", ctx->modeInfo->vdisplay );
+                                        "CRTC_H", crtcH );
 
                   wstAtomicAddProperty( ctx, req, nw->windowPlane->plane->plane_id,
                                         nw->windowPlane->planeProps->count_props, nw->windowPlane->planePropRes,
