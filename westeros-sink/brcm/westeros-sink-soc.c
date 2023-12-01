@@ -3413,21 +3413,18 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
       return;
    }
 
-   /* Only use 2x decode rate for immediate output if NEXUS_VideoDecoderLowLatencyMode_eGaming
-      low latency mode is not available.  The Broadcom refsw team has concerns that
-      using the 2x rate could cause the most recent frame to be dropped */
-   #ifndef NEXUS_LOWLATENCY_GAMING_API_BACKPORT
+   /* use 1.2,  1.5 and up tends to drop frames unnecessarily, if they are only a bit late.
+      1.2 will get to the same low latency, but is smoother (and a bit slower) getting there than 2.0 */
    if ( sink->soc.useImmediateOutput )
    {
        NEXUS_VideoDecoderTrickState trickState;
        NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
-       trickState.rate= NEXUS_NORMAL_DECODE_RATE * 2;
+       trickState.rate= NEXUS_NORMAL_DECODE_RATE * 1.2;
        trickState.tsmEnabled= NEXUS_TsmMode_eDisabled;
        GST_LOG("updateClientPlaySpeed: useImmediateOutput: SetTrickState rate %d TsmMode disabled", trickState.rate);
        NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
        return;
    }
-   #endif
 
    if ( clientPlaySpeed < 0 )
    {
@@ -4638,9 +4635,6 @@ static void updateVideoDecoderSettings( GstWesterosSink *sink )
       ext_settings.zeroDelayOutputMode= true;
       ext_settings.ignoreDpbOutputDelaySyntax= true;
       ext_settings.earlyPictureDeliveryMode= true;
-      #ifdef NEXUS_LOWLATENCY_GAMING_API_BACKPORT
-      ext_settings.lowLatencySettings.mode= NEXUS_VideoDecoderLowLatencyMode_eGaming;
-      #endif
       printf("westerossink: using immediate output mode\n");
    }
    ext_settings.treatIFrameAsRap= true;
