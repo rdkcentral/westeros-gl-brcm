@@ -373,6 +373,10 @@ TESTCASE genericTests[]=
       "Test ERM revoke timeout",
       testCaseERMRevokeTimeout
    },
+   { "testERMRequestReleaseLoop",
+      "Test ERM request release loop",
+      testCaseERMRequestReleaseLoop
+   },
    { "testRenderBasicComposition",
      "Test compositor basic composition",
      testCaseRenderBasicComposition

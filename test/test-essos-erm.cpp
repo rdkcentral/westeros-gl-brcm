@@ -1602,3 +1602,88 @@ exit:
    return testResult;
 }
 
+bool testCaseERMRequestReleaseLoop( EMCTX *emctx )
+{
+   bool testResult= false;
+   bool result;
+   EssRMgr *rm= 0;
+   EssRMgrRequest req;
+   TestCtx ctxA;
+   TestCtx *tctx;
+   int loopIdx;
+
+   tctx= &ctxA;
+
+   result= initERM( emctx, configFileBase );
+   if ( !result )
+   {
+      EMERROR("initERM failed");
+      goto exit;
+   }
+
+   memset( &ctxA, 0, sizeof(ctxA) );
+   ctxA.emctx= emctx;
+   ctxA.name= "A";
+   ctxA.type= EssRMgrResType_videoDecoder;
+   ctxA.async= true;
+   ctxA.loop= 1;
+   ctxA.priority= 0;
+   ctxA.usage= 7;
+   ctxA.delay= 60000;
+   ctxA.assignedId= -1;
+   ctxA.prevAssignedId= -1;
+
+   memset( &req, 0, sizeof(EssRMgrRequest) );
+
+   for( loopIdx= 0; loopIdx < 100; ++loopIdx )
+   {
+      rm= EssRMgrCreate();
+      if ( !rm )
+      {
+         EMERROR("EssRMgrCreate failed iteration %d", loopIdx);
+         goto exit;
+      }
+
+      req.type= EssRMgrResType_videoDecoder;
+      req.assignedId= -1;
+      req.requestId= -1;
+      req.usage= tctx->usage;
+      req.priority= tctx->priority;
+      req.asyncEnable= tctx->async;
+      req.notifyCB= notify;
+      req.notifyUserData= tctx;
+
+      result= EssRMgrRequestResource( rm, req.type, &req );
+      if ( result )
+      {
+         if ( req.assignedId >= 0 )
+         {
+            EssRMgrReleaseResource( rm, req.type, req.assignedId );
+         }
+      }
+      else
+      {
+         EMERROR("video request failed iteration %d", loopIdx );
+         goto exit;
+      }
+
+      EssRMgrDestroy( rm );
+      rm= 0;
+
+      usleep(20000);
+   }
+
+   testResult= true;
+
+
+exit:
+   termERM( emctx );
+
+   if ( rm )
+   {
+      EssRMgrDestroy( rm );
+   }
+
+   return testResult;
+}
+

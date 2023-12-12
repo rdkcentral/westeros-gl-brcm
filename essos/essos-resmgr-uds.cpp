@@ -4778,12 +4778,10 @@ static void* essRMNotifyThread( void *userData )
       {
          EssRMgr *rm= info->rm;
          int event= info->value1;
-         pthread_mutex_lock( &rm->conn->mutexNotify );
          sem_post( &notifyInfo->semNotifyStart );
          DEBUG("calling notify callback");
          info->req.notifyCB( rm, event, info->req.type, info->req.assignedId, info->req.notifyUserData );
          DEBUG("done calling notify callback");
-         pthread_mutex_unlock( &rm->conn->mutexNotify );
 
          sem_post( &info->semComplete );
       }

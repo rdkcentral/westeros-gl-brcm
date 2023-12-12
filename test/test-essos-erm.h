@@ -35,6 +35,7 @@ bool testCaseERMDualVideo1( EMCTX *emctx );
 bool testCaseERMDualVideo2( EMCTX *emctx );
 bool testCaseERMDualVideo3( EMCTX *emctx );
 bool testCaseERMRevokeTimeout( EMCTX *emctx );
+bool testCaseERMRequestReleaseLoop( EMCTX *emctx );
 
 #endif
 
