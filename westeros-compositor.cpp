@@ -5988,16 +5988,16 @@ static void wstISurfaceAttach(struct wl_client *client,
       bool gotLock= true;
       if ( pthread_mutex_trylock( &surface->renderMutex ) )
       {
-         int retryLimit= ctx->framePeriodMillis;
+         int retryLimit= ctx->framePeriodMillis*2;
          gotLock= false;
          while( retryLimit-- > 0 )
          {
-            usleep( 1000 );
             if ( !pthread_mutex_trylock( &surface->renderMutex ) )
             {
                gotLock= true;
                break;
             }
+            usleep( 500 );
          }
          if ( !gotLock )
          {
