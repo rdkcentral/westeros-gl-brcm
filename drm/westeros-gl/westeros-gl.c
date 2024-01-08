@@ -5673,7 +5673,7 @@ static bool wstCheckPlanes( WstGLCtx *ctx, long long vblankTime, long long vblan
       while( iter )
       {
          VideoFrame *frame= 0;
-         if ( iter->vfm )
+         if ( iter->vfm && iter->inUse )
          {
             bool sendStatus= false;
             long long displayedFrameTime= -1LL;
