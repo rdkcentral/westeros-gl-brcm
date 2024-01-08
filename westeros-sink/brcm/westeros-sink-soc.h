@@ -62,7 +62,6 @@ struct _GstWesterosSinkSoc
    gboolean usePip;
    gboolean useLowDelay;
    gboolean frameStepOnPreroll;
-   gboolean frameStepping;
    gboolean enableTextureSignal;
    gboolean enableDecodeErrorSignal;
    gint latencyTarget;
@@ -120,6 +119,7 @@ struct _GstWesterosSinkSoc
    NEXUS_VideoFormat outputFormat;
    gfloat serverPlaySpeed;
    gfloat clientPlaySpeed;
+   gboolean clientPlaying;
    gboolean stoppedForPlaySpeedChange;
    gboolean secureVideo;
    gboolean haveHardware;

@@ -2506,6 +2506,15 @@ void NEXUS_GetVideoDecoderCapabilities(
 
 // Section: nexus_simple_stc_channel ------------------------------------------------------
 
+void NEXUS_SimpleStcChannel_GetSettings(
+    NEXUS_SimpleStcChannelHandle handle,
+    NEXUS_SimpleStcChannelSettings *pSettings
+    )
+{
+   TRACE1("NEXUS_SimpleStcChannel_Invalidate: stc %p", handle);
+   memset( pSettings, 0, sizeof(NEXUS_SimpleStcChannelSettings) );
+}
+
 NEXUS_Error NEXUS_SimpleStcChannel_Freeze(
     NEXUS_SimpleStcChannelHandle handle,
     bool frozen
@@ -2525,6 +2534,31 @@ NEXUS_Error NEXUS_SimpleStcChannel_Invalidate(
    NEXUS_Error rc= NEXUS_SUCCESS;
 
    TRACE1("NEXUS_SimpleStcChannel_Invalidate: stc %p", handle);
+
+   return rc;
+}
+
+NEXUS_Error NEXUS_SimpleStcChannel_SetStc(
+    NEXUS_SimpleStcChannelHandle handle,
+    uint32_t stc
+    )
+{
+   NEXUS_Error rc= NEXUS_SUCCESS;
+
+   TRACE1("NEXUS_SimpleStcChannel_SetStc: stc %p - %d", handle, stc);
+
+   return rc;
+}
+
+NEXUS_Error NEXUS_SimpleStcChannel_SetRate(
+    NEXUS_SimpleStcChannelHandle handle,
+    unsigned increment,
+    unsigned prescale
+    )
+{
+   NEXUS_Error rc= NEXUS_SUCCESS;
+
+   TRACE1("NEXUS_SimpleStcChannel_SetRate: stc %p - incr %d pre %d", handle, increment, prescale);
 
    return rc;
 }
@@ -2940,6 +2974,7 @@ NEXUS_Error NEXUS_SimpleVideoDecoder_GetStatus(
    pStatus->numDecodeErrors= dec->numDecodeErrors;
    pStatus->numDisplayDrops= 0;
    pStatus->fifoDepth= 1;
+   TRACE1("NEXUS_SimpleVideoDecoder_GetStatus: decoded %d pts %d", pStatus->numDecoded, pStatus->pts);
 
 exit:
    return rc;
@@ -3093,6 +3128,49 @@ NEXUS_Error NEXUS_SimpleVideoDecoder_SetTrickState(
 exit:
    return rc;
 }
+
+NEXUS_Error NEXUS_SimpleVideoDecoder_GetNextPts(
+    NEXUS_SimpleVideoDecoderHandle handle,
+    uint32_t *pPts
+    )
+{
+   NEXUS_Error rc= NEXUS_SUCCESS;
+   EMSimpleVideoDecoder *dec= (EMSimpleVideoDecoder*)handle;
+   EMCTX *emctx= 0;
+
+   TRACE1("NEXUS_SimpleVideoDecoder_GetNextPts");
+
+   emctx= emGetContext();
+   if ( !emctx )
+   {
+      ERROR("NEXUS_SimpleVideoDecoder_GetNextPts: emGetContext failed");
+      goto exit;
+   }
+
+   if ( !dec || (dec->magic != EM_SIMPLE_VIDEO_DECODER_MAGIC) )
+   {
+      EMERROR("NEXUS_SimpleVideoDecoder_GetNextPts: bad decoder handle");
+      rc= NEXUS_INVALID_PARAMETER;
+      goto exit;
+   }
+
+   if ( !pPts )
+   {
+      EMERROR("NEXUS_SimpleVideoDecoder_GetNextPts: bad pts pointer");
+      rc= NEXUS_INVALID_PARAMETER;
+      goto exit;
+   }
+
+   *pPts= (dec->basePTS/2) + (((dec->frameNumber+1)/dec->videoFrameRate)*45000);
+   TRACE1("NEXUS_SimpleVideoDecoder_GetNextPts: %d", *pPts);
+
+   dec->frameNumber= dec->frameNumber+1;
+   TRACE1("NEXUS_SimpleVideoDecoder_GetNextPts: frameNumber now %d", dec->frameNumber);
+
+exit:
+   return rc;
+}
+
 
 void NEXUS_SimpleVideoDecoder_GetDefaultStartCaptureSettings(
     NEXUS_SimpleVideoDecoderStartCaptureSettings *pSettings
