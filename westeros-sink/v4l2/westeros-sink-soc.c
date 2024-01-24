@@ -5185,7 +5185,11 @@ static void wstSetSessionInfo( GstWesterosSink *sink )
             GstClock* amlclock= gst_aml_hal_asink_get_clock( audioSink );
             if (amlclock)
             {
+               #ifdef USE_AUDIOSINK_SESSION_MODE
+               sink->soc.syncType= gst_aml_clock_get_session_mode( amlclock );
+               #else
                sink->soc.syncType= SYNC_AMASTER;
+               #endif
                sink->soc.sessionId= gst_aml_clock_get_session_id( amlclock );
                gst_object_unref( amlclock );
             }
