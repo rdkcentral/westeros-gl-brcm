@@ -4787,6 +4787,8 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
    GST_DEBUG("sinkReleaseVideo: enter");
    sink->resAssignedId= -1;
    LOCK( sink );
+   gboolean started= sink->videoStarted;
+   sink->videoStarted= FALSE;
    #if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(20,1)
    if ( sink->soc.saveAllm != ALLM_NOT_SAVED )
    {
@@ -4824,11 +4826,10 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
          }
       }
 
-      if ( sink->videoStarted )
+      if ( started )
       {
          GST_DEBUG("sinkReleaseVideo: stop decoder");
          NEXUS_SimpleVideoDecoder_Stop(sink->soc.videoDecoder);
-         sink->videoStarted= FALSE;
       }
 
       sink->soc.haveHardware= FALSE;
