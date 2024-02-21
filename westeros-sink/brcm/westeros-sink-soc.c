@@ -1418,7 +1418,7 @@ gboolean gst_westeros_sink_soc_paused_to_playing( GstWesterosSink *sink, gboolea
    sink->soc.videoPlaying = TRUE;
    UNLOCK(sink);
 
-   if( (sink->soc.stcChannel != NULL) && (sink->soc.codec != bvideo_codec_unknown) )
+   if( ((sink->soc.stcChannel != NULL) || (sink->soc.useImmediateOutput)) && (sink->soc.codec != bvideo_codec_unknown) )
    {
       #if (NEXUS_PLATFORM_VERSION_MAJOR>15)
       if ( sink->soc.codec == bvideo_codec_vp9 )
@@ -3395,12 +3395,12 @@ static void updateClientPlaySpeed( GstWesterosSink *sink, gfloat clientPlaySpeed
       return;
    }
 
-   /* use 1.2,  1.5 and up tends to drop frames unnecessarily, if they are only a bit late.
-      1.2 will get to the same low latency, but is smoother (and a bit slower) getting there than 2.0 */
+   /* use 1.4,  1.5 and up tends to drop frames unnecessarily, if they are only a bit late.
+      1.4 will get to the same low latency, but is smoother (and a bit slower) getting there than 2.0 */
    if ( sink->soc.useImmediateOutput )
    {
        NEXUS_SimpleVideoDecoder_GetTrickState(sink->soc.videoDecoder, &trickState);
-       trickState.rate= playing ? NEXUS_NORMAL_DECODE_RATE * 1.2 : 0.0;
+       trickState.rate= playing ? NEXUS_NORMAL_DECODE_RATE * 1.4 : 0.0;
        trickState.tsmEnabled= NEXUS_TsmMode_eDisabled;
        GST_LOG("updateClientPlaySpeed: useImmediateOutput: SetTrickState rate %d TsmMode disabled", trickState.rate);
        NEXUS_SimpleVideoDecoder_SetTrickState(sink->soc.videoDecoder, &trickState);
