@@ -853,8 +853,10 @@ EssAppPlatformDisplayType EssContextGetAppPlatformDisplayType( EssCtx *ctx )
    {
       displayType= EssAppPlatformDisplayType_wayland;
       #ifdef EGL_PLATFORM_WAYLAND_EXT
+       #ifdef USE_ESS_BRCM_UPSTREAM_WAYLAND
          displayType= EssAppPlatformDisplayType_waylandExtension;
          INFO("prefering platform extensions");
+       #endif //USE_ESS_BRCM_UPSTREAM_WAYLAND
       #endif //EGL_PLATFORM_WAYLAND_EXT
    }
    return displayType;
