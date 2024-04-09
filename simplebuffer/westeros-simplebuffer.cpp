@@ -102,7 +102,6 @@ static void wstSBBind(struct wl_client *client, void *data, uint32_t version, ui
 {
 	struct wl_sb *sb= (struct wl_sb*)data;
    struct wl_resource *resource;
-   uint32_t capabilities;
 	
 	printf("westeros-sb: wstSBBind: enter: client %p data %p version %d id %d\n", client, data, version, id);
 
