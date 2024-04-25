@@ -316,7 +316,7 @@ typedef struct _WstRendererGL
    std::vector<WstRenderSurface*> surfaces;
 } WstRendererGL;
 
-static WstRendererGL* wstRendererGLCreate( int width, int height );
+static WstRendererGL* wstRendererGLCreate( WstRenderer *renderer );
 static void wstRendererGLDestroy( WstRendererGL *renderer );
 static WstRenderSurface *wstRendererGLCreateSurface(WstRendererGL *renderer);
 static void wstRendererGLDestroySurface( WstRendererGL *renderer, WstRenderSurface *surface );
@@ -736,7 +736,7 @@ static void wstRendererGLPrepareResource( WstRendererGL *renderer, WstRenderSurf
                   WstSBBufferGetPlaneOffsetAndStride( sbBuffer, i, &offset[i], &stride[i] );
                }
 
-               if ( (surface->bufferWidth != frameWidth) || (surface->bufferHeight != frameHeight) )
+               if ( ((uint32_t)surface->bufferWidth != frameWidth) || ((uint32_t)surface->bufferHeight != frameHeight) )
                {
                   surface->bufferWidth= frameWidth;
                   surface->bufferHeight= frameHeight;
@@ -1746,7 +1746,6 @@ static void wstRendererGLRenderSurface( WstRendererGL *renderer, WstRenderSurfac
    float *matrix= (float*)identityMatrix;
 
    int resW, resH;
-   GLint viewport[4];
 
    resW= renderer->renderer->outputWidth;
    resH= renderer->renderer->outputHeight;
@@ -2437,8 +2436,6 @@ static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *s
 
 static void wstRendererSurfaceSetVisible( WstRenderer *renderer, WstRenderSurface *surface, bool visible )
 {
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
-
    if ( surface )
    {
       surface->visible= visible;
@@ -2448,7 +2445,6 @@ static void wstRendererSurfaceSetVisible( WstRenderer *renderer, WstRenderSurfac
 static bool wstRendererSurfaceGetVisible( WstRenderer *renderer, WstRenderSurface *surface, bool *visible )
 {
    bool isVisible= false;
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
 
    if ( surface )
    {
@@ -2462,8 +2458,6 @@ static bool wstRendererSurfaceGetVisible( WstRenderer *renderer, WstRenderSurfac
 
 static void wstRendererSurfaceSetGeometry( WstRenderer *renderer, WstRenderSurface *surface, int x, int y, int width, int height )
 {
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
-   
    if ( surface )
    {
       if ( (width != surface->width) || (height != surface->height) )
@@ -2479,8 +2473,6 @@ static void wstRendererSurfaceSetGeometry( WstRenderer *renderer, WstRenderSurfa
 
 void wstRendererSurfaceGetGeometry( WstRenderer *renderer, WstRenderSurface *surface, int *x, int *y, int *width, int *height )
 {
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
-
    if ( surface )
    {
       *x= surface->x;
@@ -2492,8 +2484,6 @@ void wstRendererSurfaceGetGeometry( WstRenderer *renderer, WstRenderSurface *sur
 
 static void wstRendererSurfaceSetOpacity( WstRenderer *renderer, WstRenderSurface *surface, float opacity )
 {
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
-   
    if ( surface )
    {
       surface->opacity= opacity;
@@ -2502,7 +2492,6 @@ static void wstRendererSurfaceSetOpacity( WstRenderer *renderer, WstRenderSurfac
 
 static float wstRendererSurfaceGetOpacity( WstRenderer *renderer, WstRenderSurface *surface, float *opacity )
 {
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
    float opacityLevel= 1.0;
    
    if ( surface )
@@ -2551,7 +2540,6 @@ static void wstRendererSurfaceSetZOrder( WstRenderer *renderer, WstRenderSurface
 
 static float wstRendererSurfaceGetZOrder( WstRenderer *renderer, WstRenderSurface *surface, float *z )
 {
-   WstRendererGL *rendererGL= (WstRendererGL*)renderer->renderer;
    float zLevel= 1.0;
    
    if ( surface )
@@ -2732,10 +2720,8 @@ int renderer_init( WstRenderer *renderer, int argc, char **argv )
    {
       rc= -1;
    }
-
-exit:
    
-   return 0;
+   return rc;
 }
 
 }

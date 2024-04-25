@@ -424,7 +424,7 @@ static double wstPopPixelAspectRatio( GstWesterosSink *sink )
    if ( sink->soc.parNextCount > 0 )
    {
       pixelAspectRatio= sink->soc.parNext[0].par;
-      GST_DEBUG("pop pixelAspectRatio %f",
+      GST_DEBUG("pop pixelAspectRatio %f %dx%d",
               pixelAspectRatio, sink->soc.parNext[0].frameWidth, sink->soc.parNext[0].frameHeight);
       if ( --sink->soc.parNextCount > 0 )
       {
@@ -2104,7 +2104,6 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       #ifdef USE_GST_ALLOCATORS
       if ( sink->soc.inputMemMode == V4L2_MEMORY_DMABUF )
       {
-         uint32_t bytesused;
          gsize dataOffset, maxSize;
 
          buffIndex= wstGetInputBuffer( sink );
@@ -2953,7 +2952,6 @@ static void wstDiscoverVideoDecoder( GstWesterosSinkClass *klass )
             {
                free( dummySink.soc.inputFormats );
             }
-            dummySink.soc.numInputFormats;
 
             if ( !acceptsCompressed )
             {
@@ -3074,7 +3072,6 @@ static void wstProcessEvents( GstWesterosSink *sink )
                      (fmtOut.fmt.pix.height != sink->soc.fmtOut.fmt.pix.height) ) ) ||
                  (sink->soc.frameOutCount > 0) )
             {
-               int vx, vy, vw, vh;
                wstTearDownOutputBuffers( sink );
 
                if ( sink->soc.isMultiPlane )
@@ -5072,7 +5069,6 @@ static GstElement* wstFindAudioSink( GstWesterosSink *sink )
    GstElement *audioSink= 0;
    GstElement *pipeline= 0;
    GstElement *element, *elementPrev= 0;
-   GstIterator *iterator;
 
    element= GST_ELEMENT_CAST(sink);
    do
@@ -5506,7 +5502,7 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
       struct iovec iov[1];
       unsigned char mbody[4+64];
       char cmbody[CMSG_SPACE(3*sizeof(int))];
-      int i, len;
+      int i;
       int *fd;
       int numFdToSend;
       int frameFd0= -1, frameFd1= -1, frameFd2= -1;
@@ -5828,7 +5824,6 @@ typedef struct bufferInfo
 
 static void buffer_release( void *data, struct wl_buffer *buffer )
 {
-   int rc;
    bufferInfo *binfo= (bufferInfo*)data;
 
    GstWesterosSink *sink= binfo->sink;
@@ -6717,8 +6712,6 @@ capture_start:
       }
       else
       {
-         int rc;
-
          LOCK(sink);
          #ifdef USE_GENERIC_AVSYNC
          wstUpdateAVSyncCtx( sink, sink->soc.avsctx );
@@ -7135,7 +7128,7 @@ static gpointer wstEOSDetectionThread(gpointer data)
    if ( !sink->soc.quitEOSDetectionThread )
    {
       GThread *thread= sink->soc.eosDetectionThread;
-      g_thread_unref( sink->soc.eosDetectionThread );
+      g_thread_unref( thread );
       sink->soc.eosDetectionThread= NULL;
    }
 

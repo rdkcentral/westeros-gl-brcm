@@ -25,6 +25,9 @@ AM_CXXFLAGS= \
 	-I$(top_srcdir)/include \
    -I${PKG_CONFIG_SYSROOT_DIR}/$(includedir)/wayland \
    $(WAYLAND_CLIENT_CFLAGS) $(WAYLAND_SERVER_CFLAGS) \
+   -Wno-unused-but-set-variable \
+   -Wno-deprecated-declarations \
+   -Wno-format-truncation \
    $(XKBCOMMON_CFLAGS)   
 AM_LDFLAGS=$(WAYLANDLIB)
 

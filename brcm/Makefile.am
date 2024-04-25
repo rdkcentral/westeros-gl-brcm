@@ -46,7 +46,7 @@ libwesteros_gl_la_SOURCES = westeros-gl/westeros-gl.cpp
 
 libwesteros_gl_la_include_HEADERS = westeros-gl/westeros-gl.h
 libwesteros_gl_la_includedir = $(includedir)
-libwesteros_gl_la_CXXFLAGS= $(AM_CFLAGS)
+libwesteros_gl_la_CXXFLAGS= $(AM_CFLAGS) -Wno-deprecated-declarations
 
 libwesteros_gl_la_LDFLAGS= \
    $(AM_LDFLAGS) \

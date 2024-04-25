@@ -42,7 +42,6 @@ WstRenderer* WstRendererCreate( const char *moduleName, int argc, char **argv, s
    if ( renderer )
    {
       int rc;
-      const char *displayName= 0;
       int i= 0;
       int len, value;
       int width= DEFAULT_OUTPUT_WIDTH;

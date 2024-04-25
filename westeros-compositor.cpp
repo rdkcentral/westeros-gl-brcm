@@ -679,7 +679,9 @@ static void wstIShellSurfaceSetClass(struct wl_client *client,
                                      struct wl_resource *resource,
                                      const char *className );
 static void wstXdgShellBind( struct wl_client *client, void *data, uint32_t version, uint32_t id);
+#if not defined ( USE_XDG_VERSION4 )
 static void wstIXdgDestroy( struct wl_client *client, struct wl_resource *resource );
+#endif
 static void wstIXdgUseUnstableVersion( struct wl_client *client, struct wl_resource *resource, int32_t version );
 static void wstIXdgGetXdgSurface( struct wl_client *client, 
                                   struct wl_resource *resource,
@@ -704,6 +706,7 @@ static void wstIXdgPong( struct wl_client *client,
                          uint32_t serial );
 static void wstIXdgShellSurfaceDestroy( struct wl_client *client,
                                         struct wl_resource *resource );
+#if defined ( USE_XDG_STABLE )
 static void wstIXdgCreatePositioner( struct wl_client *client,
                                      struct wl_resource *resource,
                                      uint32_t id);
@@ -718,6 +721,7 @@ static void wstIXdgShellGetPopup( struct wl_client *client,
 static void wstIXdgShellAckConfigure( struct wl_client *client,
                                       struct wl_resource *resource,
                                       uint32_t serial);
+#endif
 static void wstIXdgShellSurfaceSetParent( struct wl_client *client,
                                           struct wl_resource *resource,
                                           struct wl_resource *parentResource );
@@ -800,15 +804,6 @@ static void wstDefaultNestedVpcVideoXformChange( void *userData,
                                                  uint32_t y_scale_denom,
                                                  uint32_t output_width,
                                                  uint32_t output_height );
-static void wstDefaultNestedSurfaceStatus( void *userData, struct wl_surface *surface,
-                                           const char *name,
-                                           uint32_t visible,
-                                           int32_t x,
-                                           int32_t y,
-                                           int32_t width,
-                                           int32_t height,
-                                           wl_fixed_t opacity,
-                                           wl_fixed_t zorder);
 static void wstSetDefaultNestedListener( WstContext *ctx );
 #ifdef ENABLE_LEXPSYNCPROTOCOL
 static void wstInvalidateImportedSync( WstContext *ctx );
@@ -2250,8 +2245,6 @@ bool WstCompositorSetDispatchCallback( WstCompositor *wctx, WstDispatchCallback 
       result= true;
    }
 
-exit:
-
    return result;   
 }
 
@@ -2272,8 +2265,6 @@ bool WstCompositorSetInvalidateCallback( WstCompositor *wctx, WstInvalidateScene
       
       result= true;
    }
-
-exit:
 
    return result;   
 }
@@ -2624,7 +2615,7 @@ bool WstCompositorComposeEmbedded( WstCompositor *wctx,
          {
             if ( ctx->renderer->rects.size() )
             {
-               for( int i= 0; i < ctx->renderer->rects.size(); ++i )
+               for( size_t i= 0; i < ctx->renderer->rects.size(); ++i )
                {
                   if ( ctx->renderer->rects[i].width && ctx->renderer->rects[i].height )
                   {
@@ -3459,7 +3450,7 @@ static void sbReleaseBuffer(void *userData, struct wl_sb_buffer *buffer)
 
    if ( ctx )
    {
-      for ( int i= 0; i < ctx->surfaces.size(); ++i )
+      for ( size_t i= 0; i < ctx->surfaces.size(); ++i )
       {
          WstSurface *surface= ctx->surfaces[i];
          struct wl_resource *resource= buffer->resource;
@@ -4269,8 +4260,6 @@ static bool wstCompositorCheckForRepeaterSupport( WstContext *ctx )
    {
       supportsRepeater= true;
    }
-
-exit:
    #endif
 
    INFO("checking repeating composition supported: %s", (supportsRepeater ? "yes" : "no") );
@@ -4310,7 +4299,7 @@ static void wstCompositorDestroyVirtual( WstCompositor *wctx )
          {
             bool found= false;
             client= wl_resource_get_client( surface->resource );
-            for( int i= 0; i < clients.size(); ++i )
+            for( size_t i= 0; i < clients.size(); ++i )
             {
                if ( clients[i] == client )
                {
@@ -5150,8 +5139,6 @@ static void wstShmDestroyPool( struct wl_resource *resource )
    
    if ( pool )
    {
-      WstShm *shm= pool->shm;
-      
       wstShmPoolUnRef( pool );
    }
 }
@@ -5370,7 +5357,6 @@ static void wstICompositorCreateSurface( struct wl_client *client, struct wl_res
    WstCompositor *wctx= 0;
    WstSurface *surface;
    WstSurfaceInfo *surfaceInfo;
-   int clientId;
    
    pthread_mutex_lock( &ctx->mutex );
 
@@ -6061,7 +6047,8 @@ static void wstISurfaceDamage(struct wl_client *client,
                               struct wl_resource *resource,
                               int32_t x, int32_t y, int32_t width, int32_t height)
 {
-   WstSurface *surface= (WstSurface*)wl_resource_get_user_data(resource);
+   WESTEROS_UNUSED(client);
+   WESTEROS_UNUSED(resource);
    WESTEROS_UNUSED(x);
    WESTEROS_UNUSED(y);
    WESTEROS_UNUSED(width);
@@ -6170,7 +6157,6 @@ static void wstISurfaceCommit(struct wl_client *client, struct wl_resource *reso
             sbBuffer= WstSBBufferGet( surface->attachedBufferResource );
             if ( sbBuffer )
             {
-               struct wl_buffer *buffer;
                int stride;
                uint32_t format;
 
@@ -6197,7 +6183,6 @@ static void wstISurfaceCommit(struct wl_client *client, struct wl_resource *reso
          #if defined (WESTEROS_HAVE_WAYLAND_EGL)
          if ( ctx->canRemoteClone )
          {
-            struct wl_display *nestedDisplay;
             struct wl_buffer *clone;
 
             if ( ctx->ncDisplay )
@@ -6921,11 +6906,13 @@ static void wstXdgShellBind( struct wl_client *client, void *data, uint32_t vers
    ctx->clientInfoMap[client]->usesXdgShell= true;
 }
 
+#if not defined ( USE_XDG_VERSION4 )
 static void wstIXdgDestroy( struct wl_client *client, struct wl_resource *resource )
 {
    WESTEROS_UNUSED(client);
    wl_resource_destroy( resource );
 }
+#endif
 
 #if defined ( USE_XDG_STABLE )
 static void wstIXdgCreatePositioner( struct wl_client *client, struct wl_resource *resource, uint32_t id)
@@ -7163,6 +7150,7 @@ static void wstIXdgShellSurfaceSetWindowGeometry( struct wl_client *client,
    WESTEROS_UNUSED(height);
 }
                                                   
+#if defined ( USE_XDG_STABLE )
 static void wstIXdgShellGetTopLevel( struct wl_client *client,
                                      struct wl_resource *resource,
                                      uint32_t id)
@@ -7193,6 +7181,7 @@ static void wstIXdgShellAckConfigure( struct wl_client *client,
    WESTEROS_UNUSED(resource);
    WESTEROS_UNUSED(serial);
 }
+#endif
 
 static void wstIXdgShellSurfaceSetMaximized( struct wl_client *client,
                                              struct wl_resource *resource )
@@ -7562,8 +7551,8 @@ static void wstDefaultNestedKeyboardHandleRepeatInfo( void *userData, int32_t ra
          if ( ctx->seat )
          {
             pthread_mutex_lock( &ctx->mutex );
-            ctx->seat->keyRepeatDelay;
-            ctx->seat->keyRepeatRate;
+            ctx->seat->keyRepeatDelay= delay;
+            ctx->seat->keyRepeatRate= rate;
             pthread_mutex_unlock( &ctx->mutex );
          }
       }
@@ -7847,12 +7836,11 @@ static void wstDefaultNestedShmFormat( void *userData, uint32_t format )
 static void wstDefaultNestedVpcVideoPathChange( void *userData, struct wl_surface *surfaceNested, uint32_t newVideoPath )
 {
    WstContext *ctx= (WstContext*)userData;
-   WstSurface *surface= 0;
 
    if ( ctx )
    {
       pthread_mutex_lock( &ctx->mutex );
-      for( int i= 0; i < ctx->surfaces.size(); ++i )
+      for( size_t i= 0; i < ctx->surfaces.size(); ++i )
       {
          WstSurface *surface= ctx->surfaces[i];
          if ( surface->surfaceNested == surfaceNested )
@@ -7888,13 +7876,12 @@ static void wstDefaultNestedVpcVideoXformChange( void *userData,
                                                  uint32_t output_height )
 {
    WstContext *ctx= (WstContext*)userData;
-   WstSurface *surface= 0;
    bool needRepaint= false;
 
    if ( ctx )
    {
       pthread_mutex_lock( &ctx->mutex);
-      for( int i= 0; i < ctx->surfaces.size(); ++i )
+      for( size_t i= 0; i < ctx->surfaces.size(); ++i )
       {
          WstSurface *surface= ctx->surfaces[i];
          if ( surface->surfaceNested == surfaceNested )
@@ -8122,7 +8109,6 @@ static void wstSeatCreateDevices( WstCompositor *wctx )
       if ( ctx->seat )
       {
          WstSeat *seat= ctx->seat;
-         WstKeyboard *keyboard;
          WstPointer *pointer;
          WstTouch *touch;
 
@@ -8476,7 +8462,6 @@ static void wstIPointerSetCursor( struct wl_client *client,
    WstCompositor *compositor= pointer->compositor;
    WstContext *ctx= compositor->ctx;
    WstSurface *surface= 0;
-   bool hidePointer= false;
    int pid= 0;
 
    if ( surfaceResource )
@@ -8542,18 +8527,12 @@ static void wstIPointerRelease( struct wl_client *client, struct wl_resource *re
 {
    WESTEROS_UNUSED(client);
 
-   WstPointer *pointer= (WstPointer*)wl_resource_get_user_data(resource);
-   WstCompositor *compositor= pointer->compositor;
-
    wl_resource_destroy(resource);
 }
 
 static void wstITouchRelease( struct wl_client *client, struct wl_resource *resource )
 {
    WESTEROS_UNUSED(client);
-
-   WstTouch *touch= (WstTouch*)wl_resource_get_user_data(resource);
-   WstCompositor *compositor= touch->compositor;
 
    wl_resource_destroy(resource);
 }
@@ -9150,7 +9129,7 @@ static void wstTerminateKeymap( WstCompositor *wctx )
 static void wstProcessKeyEvent( WstKeyboard *keyboard, uint32_t keyCode, uint32_t keyState, uint32_t modifiers )
 {
    WstCompositor *compositor= keyboard->compositor;
-   xkb_mod_mask_t changes, modDepressed, modLatched, modLocked, modGroup;
+   xkb_mod_mask_t changes, modDepressed, modLocked;
    uint32_t serial, time, state;
    struct wl_resource *resource;
 
@@ -9445,7 +9424,7 @@ static void wstProcessPointerEnter( WstPointer *pointer, int x, int y, struct wl
          {
             WstSurface *surface= 0;
             
-            for( int i= 0; i < ctx->surfaces.size(); ++i )
+            for( size_t i= 0; i < ctx->surfaces.size(); ++i )
             {
                if ( ctx->surfaces[i]->surfaceNested == surfaceNested )
                {
@@ -9499,7 +9478,7 @@ static void wstProcessPointerLeave( WstPointer *pointer, struct wl_surface *surf
       {
          WstSurface *surface= 0;
          
-         for( int i= 0; i < ctx->surfaces.size(); ++i )
+         for( size_t i= 0; i < ctx->surfaces.size(); ++i )
          {
             if ( ctx->surfaces[i]->surfaceNested == surfaceNested )
             {
@@ -9552,7 +9531,6 @@ static void wstProcessPointerMoveEvent( WstPointer *pointer, int32_t x, int32_t 
 {
    WstCompositor *compositor= pointer->compositor;
    WstContext *ctx= compositor->ctx;
-   WstSurface *surface= 0;
    int sx=0, sy=0, sw=0, sh=0;
    uint32_t time;
    struct wl_resource *resource;
@@ -9707,7 +9685,7 @@ static void wstPointerUpdatePosition( WstPointer *pointer )
 static void wstPointerSetFocus( WstPointer *pointer, WstSurface *surface, wl_fixed_t x, wl_fixed_t y )
 {
    WstCompositor *compositor= pointer->compositor;
-   uint32_t serial, time;
+   uint32_t serial;
    struct wl_client *surfaceClient;
    struct wl_resource *resource;
 
@@ -9784,7 +9762,7 @@ static void wstProcessTouchDownEvent( WstTouch *touch, uint32_t time, int id, in
          {
             WstSurface *surface= 0;
 
-            for( int i= 0; i < ctx->surfaces.size(); ++i )
+            for( size_t i= 0; i < ctx->surfaces.size(); ++i )
             {
                if ( ctx->surfaces[i]->surfaceNested == surfaceNested )
                {
@@ -9862,7 +9840,6 @@ static void wstProcessTouchUpEvent( WstTouch *touch, uint32_t time, int id )
 static void wstProcessTouchMotionEvent( WstTouch *touch, uint32_t time, int id, int x, int y )
 {
    WstContext *ctx= touch->compositor->ctx;
-   uint32_t serial;
    struct wl_resource *resource;
    int sx, sy, sw, sh;
 

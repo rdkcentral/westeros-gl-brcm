@@ -373,7 +373,7 @@ bool wstsw_render( GstWesterosSink *sink, GstBuffer *buffer, gboolean preroll )
 
                   if ( sink->swDisplay )
                   {
-                     gint64 currFrameTime, currFramePTS;
+                     gint64 currFrameTime;
 
                      swFrame.width= swCtx->frame->width;
                      swFrame.height= swCtx->frame->height;
@@ -392,7 +392,7 @@ bool wstsw_render( GstWesterosSink *sink, GstBuffer *buffer, gboolean preroll )
                         gint64 framePeriod= currFrameTime-swCtx->prevFrameTime;
                         gint64 nominalFramePeriod= 1000000LL / swCtx->frameRate;
                         gint64 delay= (nominalFramePeriod-framePeriod);
-                        GST_LOG("wstsw_render: time %lld prev_time %lld delay %lld", currFrameTime, swCtx->prevFrameTime, delay ); 
+                        GST_LOG("wstsw_render: time %zd prev_time %zd delay %zd", currFrameTime, swCtx->prevFrameTime, delay );
                         if ( (delay > 2) && (delay <= nominalFramePeriod) )
                         {
                            usleep( delay );

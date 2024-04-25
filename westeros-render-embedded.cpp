@@ -783,7 +783,7 @@ static void wstRendererEMBPrepareResource( WstRendererEMB *renderer, WstRenderSu
                   WstSBBufferGetPlaneOffsetAndStride( sbBuffer, i, &offset[i], &stride[i] );
                }
 
-               if ( (surface->bufferWidth != frameWidth) || (surface->bufferHeight != frameHeight) )
+               if ( ((uint32_t)surface->bufferWidth != frameWidth) || ((uint32_t)surface->bufferHeight != frameHeight) )
                {
                   surface->bufferWidth= frameWidth;
                   surface->bufferHeight= frameHeight;
@@ -2562,8 +2562,6 @@ static float wstRendererSurfaceGetZOrder( WstRenderer *renderer, WstRenderSurfac
 #define TEXTURE_CROP_DENOM (100000)
 static void wstRendererSurfaceSetCrop( WstRenderer *renderer, WstRenderSurface *surface, float x, float y, float width, float height )
 {
-   WstRendererEMB *rendererEMB= (WstRendererEMB*)renderer->renderer;
-
    if ( surface  )
    {
       if ( (surface->width > 0) && (surface->height > 0) )
@@ -2928,10 +2926,8 @@ int renderer_init( WstRenderer *renderer, int argc, char **argv )
    {
       rc= -1;
    }
-
-exit:
    
-   return 0;
+   return rc;
 }
 
 }

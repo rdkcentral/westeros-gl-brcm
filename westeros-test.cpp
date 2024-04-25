@@ -234,8 +234,6 @@ static long long currentTimeMillis()
 
 static void shmFormat(void *data, struct wl_shm *wl_shm, uint32_t format)
 {
-   AppCtx *ctx = (AppCtx*)data;
-
    printf("shm format: %X\n", format);
 }
 
@@ -562,7 +560,6 @@ static void seatCapabilities( void *data, struct wl_seat *seat, uint32_t capabil
 
 static void seatName( void *data, struct wl_seat *seat, const char *name )
 {
-   AppCtx *ctx = (AppCtx*)data;
    printf("seat %p name: %s\n", seat, name);
 }
 
@@ -752,7 +749,6 @@ static void shellSurfaceStatus(void *data,
 static void shellGetSurfacesDone(void *data,
                                  struct wl_simple_shell *wl_simple_shell)
 {
-   AppCtx *ctx = (AppCtx*)data;
    printf("shell: get all surfaces done\n");
 }                                        
 
@@ -1046,11 +1042,9 @@ int main( int argc, char** argv)
    struct sigaction sigint;
    struct wl_display *display= 0;
    struct wl_registry *registry= 0;
-   int count;
    int delay= 16667;
    const char *display_name= 0;
    bool paceRendering= true;
-   EGLBoolean swapok;
    bool isBackgroundProcess;
 
    printf("westeros_test: v1.0\n" );
@@ -1693,7 +1687,6 @@ static void renderGL( AppCtx *ctx )
       { 0, 0, 0, 1 }
    };
    static const uint32_t speed_div = 5;
-   EGLint rect[4];
 
    glViewport( 0, 0, ctx->planeWidth, ctx->planeHeight );
    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);

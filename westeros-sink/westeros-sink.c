@@ -801,7 +801,7 @@ static void timeCodeAdd( GstWesterosSink *sink, guint64 pts, guint hours, guint 
 {
    #ifdef USE_GST_VIDEO
    int i;
-   guint64 firstNano, position;
+   guint64 position;
    LOCK(sink);
    if (
         (hours < sink->timeCodeActive.hours) ||
@@ -822,7 +822,7 @@ static void timeCodeAdd( GstWesterosSink *sink, guint64 pts, guint hours, guint 
          {
             if ( position < sink->timeCodes[i].position )
             {
-               GST_DEBUG("update time code: PTS %lld : %d:%d:%d : count %d capacity %d", position, hours, minutes, seconds, sink->timeCodeCount, sink->timeCodeCapacity);
+               GST_DEBUG("update time code: PTS %lld : %d:%d:%d : count %d capacity %d", (long long unsigned)position, hours, minutes, seconds, sink->timeCodeCount, sink->timeCodeCapacity);
                sink->timeCodes[i].position= position;
             }
             goto exit;
@@ -851,7 +851,7 @@ static void timeCodeAdd( GstWesterosSink *sink, guint64 pts, guint hours, guint 
    }
 
    i= sink->timeCodeCount++;
-   GST_DEBUG("add time code: PTS %lld : %d:%d:%d : count %d capacity %d", position, hours, minutes, seconds, sink->timeCodeCount, sink->timeCodeCapacity);
+   GST_DEBUG("add time code: PTS %lld : %d:%d:%d : count %d capacity %d", (long long unsigned)position, hours, minutes, seconds, sink->timeCodeCount, sink->timeCodeCapacity);
    sink->timeCodes[i].hours= hours;
    sink->timeCodes[i].minutes= minutes;
    sink->timeCodes[i].seconds= seconds;
@@ -911,7 +911,7 @@ static void timeCodePresent( GstWesterosSink *sink, guint64 position, guint sign
       sink->timeCodeActive.seconds= seconds;
       UNLOCK(sink);
 
-      GST_DEBUG("emit time code signal: (%d:%d:%d) PTS %lld", hours, minutes, seconds, position);
+      GST_DEBUG("emit time code signal: (%d:%d:%d) PTS %lld", hours, minutes, seconds, (long long unsigned)position);
       g_signal_emit( G_OBJECT(sink),
                      signal,
                      0,
@@ -2064,7 +2064,7 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
             if ( sink->useSegmentPosition &&
                  (segmentFormat == GST_FORMAT_TIME) )
             {
-               GST_DEBUG("using segment position: start %lld position %lld", segmentStart, segmentPosition);
+               GST_DEBUG("using segment position: start %lld position %lld", (long long)segmentStart, (long long)segmentPosition);
                sink->position= GST_TIME_AS_NSECONDS(segmentPosition);
                sink->positionSegmentStart= GST_TIME_AS_NSECONDS(segmentPosition);
             }

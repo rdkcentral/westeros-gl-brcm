@@ -482,7 +482,7 @@ void sendVideoFormatChgMsg( GstWesterosSink *sink )
          if ( setFormatChange )
          {
             GST_DEBUG("calling gst_brcm_system_clock_set_format_change_pts() pts 0x%x", status.pts);
-            gboolean ret= (*setFormatChange)( sink->soc.stcChannel, status.pts );
+            (*setFormatChange)( sink->soc.stcChannel, status.pts );
          }
          dlclose( module );
       }
@@ -788,7 +788,6 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
 {
    gboolean result= FALSE;
    NEXUS_Error rc;
-   NxClient_AllocSettings allocSettings;
    int i;
 
    sink->soc.captureWidth= -1;
@@ -1357,8 +1356,6 @@ void gst_westeros_sink_soc_registryHandleGlobalRemove( GstWesterosSink *sink,
 
 gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault )
 {
-   NEXUS_Error rc;
-
    gboolean result= FALSE;
    
    WESTEROS_UNUSED(passToDefault);
@@ -1379,7 +1376,6 @@ gboolean gst_westeros_sink_soc_null_to_ready( GstWesterosSink *sink, gboolean *p
 gboolean gst_westeros_sink_soc_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault )
 {
    WESTEROS_UNUSED(passToDefault);
-   NEXUS_Error rc;
    
    GST_DEBUG("sink_soc_ready_to_paused");
    if ( !queryPeerHandles(sink) )
@@ -1770,7 +1766,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
            NEXUS_SimpleVideoDecoder_GetCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, &captureStatus, 1, &numReturned);
            if ( numReturned > 0 ) {
                gint64 pts= ((gint64)captureStatus.pts)*2LL;
-               GST_DEBUG_OBJECT(sink, "Dropping frame at pts: %lld %"GST_TIME_FORMAT, pts, GST_TIME_ARGS((pts * GST_MSECOND) / 90LL));
+               GST_DEBUG_OBJECT(sink, "Dropping frame at pts: %zd %"GST_TIME_FORMAT, pts, GST_TIME_ARGS((pts * GST_MSECOND) / 90LL));
                NEXUS_SimpleVideoDecoder_RecycleCapturedSurfaces(sink->soc.videoDecoder, &captureSurface, 1);
            }
        } while ( numReturned > 0 );
@@ -2668,7 +2664,7 @@ static void processTextureWayland( GstWesterosSink *sink, NEXUS_SurfaceHandle su
       binfo->deviceBuffer= surface;
 
       buff= wl_sb_create_buffer( sink->soc.sb,
-                                 (uint32_t)surface,
+                                 (uintptr_t)surface,
                                  sink->windowWidth,
                                  sink->windowHeight,
                                  sink->windowWidth*4,
@@ -2699,7 +2695,7 @@ static void processFrame( GstWesterosSink *sink )
    haveResources= sink->soc.haveResources;
    UNLOCK( sink );
 
-   if ( sink->soc.haveResources )
+   if ( haveResources )
    {
       sink->soc.captureCount++;
       captureSurface= 0;
@@ -2743,8 +2739,6 @@ static void processFrame( GstWesterosSink *sink )
          }
       }
    }
-
-exit:
 
    GST_LOG("processFrame: exit");
 }
@@ -2836,7 +2830,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   sink->firstPTS= sink->currentPTS;
                }
                sink->prevPositionSegmentStart = sink->positionSegmentStart;
-               GST_DEBUG("SegmentStart changed! Updating first PTS to %lld ", sink->firstPTS);
+               GST_DEBUG("SegmentStart changed! Updating first PTS to %zd ", sink->firstPTS);
             }
             if ( sink->currentPTS != 0 || sink->soc.frameCount == 0 )
             {
@@ -2852,7 +2846,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
                   // We have a rollover: Adjust firstPTS to keep our running time correct.
                   sink->firstPTS= sink->currentPTS-(gint64)((uint32_t)sink->currentPTS-(uint32_t)prevPTS);
                   sink->firstPTS -= ((sink->position-sink->positionSegmentStart)*90LL+GST_MSECOND/2)/GST_MSECOND;
-                  GST_DEBUG("PTS rollover: (%lld to %lld) firstPTS now %lld", prevPTS, sink->currentPTS, sink->firstPTS);
+                  GST_DEBUG("PTS rollover: (%zd to %zd) firstPTS now %zd", prevPTS, sink->currentPTS, sink->firstPTS);
                }
                sink->position= sink->positionSegmentStart + ((sink->currentPTS - sink->firstPTS) * GST_MSECOND) / 90LL;
                if ( sink->timeCodePresent && sink->enableTimeCodeSignal )
@@ -2953,7 +2947,7 @@ static void updateVideoStatus( GstWesterosSink *sink )
       int limit= EOS_DETECT_DELAY;
       if ( sink->soc.noFrameCount*FRAME_POLL_TIME > limit )
       {
-         GST_INFO_OBJECT(sink, "updateVideoStatus: eos detected: firstPTS %lld currentPTS %lld", sink->firstPTS, sink->currentPTS);
+         GST_INFO_OBJECT(sink, "updateVideoStatus: eos detected: firstPTS %zd currentPTS %zd", sink->firstPTS, sink->currentPTS);
          sink->eosEventSeen= TRUE;
          gst_westeros_sink_eos_detected( sink );
          sink->soc.noFrameCount= 0;
@@ -3120,8 +3114,8 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
             }
             else if (!strcasecmp(struct_name, "get_current_pts"))
             {
-               g_value_init(&val, G_TYPE_POINTER);
-               g_value_set_pointer(&val, (gpointer)(guint)(sink->currentPTS/2));
+               g_value_init(&val, G_TYPE_UINT);
+               g_value_set_uint(&val, (guint)(sink->currentPTS/2));
 
                gst_structure_set_value(query_structure, "current_pts", &val);
 
@@ -3129,8 +3123,8 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
             }
             else if (!strcasecmp(struct_name, "get_first_pts"))
             {
-               g_value_init(&val, G_TYPE_POINTER);
-               g_value_set_pointer(&val, (gpointer)(guint)(sink->firstPTS/2));
+               g_value_init(&val, G_TYPE_UINT);
+               g_value_set_uint(&val, (guint)(sink->firstPTS/2));
 
                gst_structure_set_value(query_structure, "first_pts", &val);
 
@@ -3244,7 +3238,7 @@ static void underflowCallback( void *userData, int n )
       {
          if ( !sink->soc.useImmediateOutput )
          {
-            GST_INFO("underflow: EOS: %d qDepth %d presStarted %d ignoreDisc %d bytesDecoded %llu PTS 0x%x",
+            GST_INFO("underflow: EOS: %d qDepth %d presStarted %d ignoreDisc %d bytesDecoded %zu PTS 0x%x",
                      sink->eosEventSeen, videoStatus.queueDepth, sink->soc.presentationStarted, sink->soc.ignoreDiscontinuity,
                      videoStatus.numBytesDecoded, videoStatus.pts);
          }
@@ -3641,13 +3635,16 @@ static gboolean processEventSinkSoc(GstWesterosSink *sink, GstPad *pad, GstEvent
             UNLOCK( sink );
             if ( eosDetected )
             {
-               passToDefault= TRUE;
+               *passToDefault= TRUE;
             }
             else
             {
                gst_westeros_sink_soc_eos_event( sink );
             }
          }
+         break;
+      default:
+         *passToDefault= TRUE;
          break;
    }
 
@@ -3670,8 +3667,6 @@ static GstFlowReturn prerollSinkSoc(GstBaseSink *base_sink, GstBuffer *buffer)
    {
       if ( queryPeerHandles(sink) )
       {
-         NEXUS_Error rc;
-
          #if (NEXUS_PLATFORM_VERSION_MAJOR>15)
          if ( sink->startAfterCaps )
          {
@@ -4160,7 +4155,7 @@ static unsigned char* convertToBinary( gchar *asciiHexData, int* dataLen )
 {
    unsigned char *buffer= 0;
    int bufferSize;
-   int len, i, d, byte;
+   int len, i, d, byte= 0;
 
    len= strlen(asciiHexData);
    bufferSize= (len/2 );
@@ -4304,11 +4299,11 @@ static void dataProbeDestroy( gpointer userData )
       probeId= sink->soc.dataProbeId;
       if ( probeId )
       {
-         g_print("dataProbeDestroy: probeId %u\n", probeId );
+         g_print("dataProbeDestroy: probeId %lu\n", probeId );
          gst_object_unref( sink->soc.dataProbePad );
          sink->soc.dataProbePad= 0;
          sink->soc.dataProbeId= 0;
-         g_print("dataProbeDestroy: probeId %u done\n", probeId);
+         g_print("dataProbeDestroy: probeId %lu done\n", probeId);
       }
       UNLOCK(sink);
    }
@@ -4450,7 +4445,6 @@ static bool establishSource( GstWesterosSink *sink )
    GstPad *sinkPad= 0;
    GstElement *pipeline= 0;
    GstElement *element, *elementPrev= 0;
-   GstIterator *iterator;
 
    element= GST_ELEMENT_CAST(sink);
    do
@@ -4537,7 +4531,7 @@ static bool establishSource( GstWesterosSink *sink )
                                                                      dataProbe,
                                                                      sink,
                                                                      dataProbeDestroy );
-                           GST_DEBUG("video data probeId %u", sink->soc.dataProbeId);
+                           GST_DEBUG("video data probeId %lu", sink->soc.dataProbeId);
                         }
                      }
                      g_value_reset( &itemElement );
@@ -4857,7 +4851,7 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
    #ifdef ENABLE_SW_DECODE
    if ( sink->soc.dataProbeId )
    {
-      GST_DEBUG("gst_pad_remove_probe dataProbeId %d\n", sink->soc.dataProbeId);
+      GST_DEBUG("gst_pad_remove_probe dataProbeId %lu\n", sink->soc.dataProbeId);
       UNLOCK( sink );
       gst_pad_remove_probe( sink->soc.dataProbePad, sink->soc.dataProbeId );
       LOCK( sink );

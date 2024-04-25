@@ -241,7 +241,7 @@ WstGLCtx* WstGLInit()
       #if ! defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
       NXPL_RegisterNexusDisplayPlatform( &ctx->nxplHandle, 0 );
       #endif
-      printf("WstGLInit: nxplHandle %x\n", ctx->nxplHandle );
+      printf("WstGLInit: nxplHandle %p\n", ctx->nxplHandle );
       
       BKNI_CreateEvent( &ctx->gfxEvent );
       ctx->gfxEventCreated= true;

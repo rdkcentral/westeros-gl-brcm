@@ -611,24 +611,6 @@ static void drawFBO ( AppCtx *appCtx )
    glFinish();
 }
 
-static bool isRotated( AppCtx *appCtx )
-{
-   float *f= appCtx->matrix;
-   const float e= 1.0e-2;
-   
-   if ( (fabsf(f[1]) > e) ||
-        (fabsf(f[2]) > e) ||
-        (fabsf(f[4]) > e) ||
-        (fabsf(f[6]) > e) ||
-        (fabsf(f[8]) > e) ||
-        (fabsf(f[9]) > e) )
-   {
-      return true;
-   }
-   
-   return false;
-}
-
 static long long getCurrentTimeMillis(void)
 {
    struct timeval tv;
@@ -758,8 +740,8 @@ void* inputThread( void *data )
    input_event e;
    unsigned int keyModifiers= 0;
    int mouseAccel= 1;
-   int mouseX= 0;
-   int mouseY= 0;
+   unsigned int mouseX= 0;
+   unsigned int mouseY= 0;
    unsigned int outputWidth= 0, outputHeight= 0;
    bool mouseEnterSent= false;
    bool mouseMoved= false;
@@ -801,7 +783,7 @@ void* inputThread( void *data )
                {
                   // A hotplug event has occurred
                   n= read( notifyFd, &intfyEvent, sizeof(intfyEvent) );
-                  if ( n >= sizeof(struct inotify_event) )
+                  if ( (unsigned)n >= sizeof(struct inotify_event) )
                   {
                      struct inotify_event *iev= (struct inotify_event*)intfyEvent;
                      {
@@ -1486,7 +1468,7 @@ static void drawLine( unsigned char *data,
 {
    unsigned int *p;
    unsigned int alpha;
-   int x, y, ht;
+   int x, y;
    unsigned int c;
    
    // Draw vertical, horizontal, or 45 degree lines
