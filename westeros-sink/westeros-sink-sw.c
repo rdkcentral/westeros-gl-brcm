@@ -18,6 +18,13 @@
 
 #include "westeros-sink-sw.h"
 
+static gboolean wstsw_null_to_ready( GstWesterosSink *sink, gboolean *passToDefault );
+static gboolean wstsw_ready_to_paused( GstWesterosSink *sink, gboolean *passToDefault );
+static gboolean wstsw_paused_to_playing( GstWesterosSink *sink, gboolean *passToDefault );
+static gboolean wstsw_playing_to_paused( GstWesterosSink *sink, gboolean *passToDefault );
+static gboolean wstsw_paused_to_ready( GstWesterosSink *sink, gboolean *passToDefault );
+static gboolean wstsw_ready_to_null( GstWesterosSink *sink, gboolean *passToDefault );
+
 #if defined(__cplusplus)
 extern "C" {
 #endif
