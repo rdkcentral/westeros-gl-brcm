@@ -2486,10 +2486,13 @@ static void essKeyboardKey( void *data, struct wl_keyboard *keyboard, uint32_t s
          if ( state == WL_KEYBOARD_KEY_STATE_PRESSED )
          {
             ctx->lastKeyTime= essGetCurrentTimeMillis();
-            ctx->lastKeyCode= key;
-            ctx->keyPressed= true;
-            ctx->keyRepeating= false;
-            essProcessKeyPressed( ctx, key );
+            if ( !(ctx->keyPressed && (ctx->lastKeyCode == key)) )
+            {
+               ctx->lastKeyCode= key;
+               ctx->keyPressed= true;
+               ctx->keyRepeating= false;
+               essProcessKeyPressed( ctx, key );
+            }
          }
          else if ( state == WL_KEYBOARD_KEY_STATE_RELEASED )
          {
@@ -3872,11 +3875,14 @@ static void essProcessInputDevices( EssCtx *ctx )
                                        break;
                                     case 1:
                                        ctx->lastKeyTime= timeMillis;
-                                       ctx->lastKeyCode= keyCode;
-                                       ctx->keyPressed= true;
-                                       ctx->keyRepeating= false;
-                                       essFillKeyAndMetadataListenerMetadata(ctx, ctx->inputDeviceFds[i].fd);
-                                       essProcessKeyPressed( ctx, keyCode );
+                                       if ( !(ctx->keyPressed && (ctx->lastKeyCode == keyCode)) )
+                                       {
+                                          ctx->lastKeyCode= keyCode;
+                                          ctx->keyPressed= true;
+                                          ctx->keyRepeating= false;
+                                          essFillKeyAndMetadataListenerMetadata(ctx, ctx->inputDeviceFds[i].fd);
+                                          essProcessKeyPressed( ctx, keyCode );
+                                       }
                                        break;
                                     default:
                                        break;
