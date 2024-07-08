@@ -10273,3 +10273,76 @@ static void wstMonitorChildProcessStdout( int descriptors[2] )
    close( descriptors[WstPipeDescriptor_ParentRead] );
 }
 
+bool WstCompositorVirtualEmbeddedSetSurfaceOwner( WstCompositor *wctx, int surfaceId )
+{
+   if ( wctx && wctx->ctx && wctx->isVirtual)
+   {
+      WstContext *ctx= wctx->ctx;
+
+      pthread_mutex_lock( &ctx->mutex );
+
+      for (std::vector<WstSurface *>::iterator it = ctx->surfaces.begin(); it != ctx->surfaces.end(); ++it)
+      {
+         WstSurface *surface= (*it);
+         if ( surface->surfaceId == surfaceId )
+         {
+            surface->compositor = wctx;
+         }
+      }
+
+      pthread_mutex_unlock( &ctx->mutex );
+
+      return true;
+   }
+   return false;
+}
+
+bool WstCompositorHasSurface( WstCompositor *wctx, int surfaceId )
+{
+   bool found = false;
+   if ( wctx && wctx->ctx)
+   {
+      WstContext *ctx= wctx->ctx;
+
+      pthread_mutex_lock( &ctx->mutex );
+
+      for (std::vector<WstSurface *>::iterator it = ctx->surfaces.begin(); it != ctx->surfaces.end(); ++it)
+      {
+         WstSurface *surface= (*it);
+         if ( surface->surfaceId == surfaceId && surface->compositor == wctx )
+         {
+            found = true;
+            break;
+         }
+      }
+
+      pthread_mutex_unlock( &ctx->mutex );
+   }
+   return found;
+}
+
+bool WstCompositorGetSurfaceIds( WstCompositor *wctx, std::vector<int> &surfaceIds )
+{
+   surfaceIds.clear();
+   if ( wctx && wctx->ctx)
+   {
+      WstContext *ctx= wctx->ctx;
+
+      pthread_mutex_lock( &ctx->mutex );
+
+      for (std::vector<WstSurface *>::iterator it = ctx->surfaces.begin(); it != ctx->surfaces.end(); ++it)
+      {
+         WstSurface *surface= (*it);
+         if ( surface->compositor == wctx )
+         {
+            surfaceIds.push_back( surface->surfaceId);
+         }
+      }
+
+      pthread_mutex_unlock( &ctx->mutex );
+
+      return true;
+   }
+   return false;
+}
+
