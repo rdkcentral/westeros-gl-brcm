@@ -671,5 +671,27 @@ void WstCompositorFocusClientById( WstCompositor *wctx, const int id);
  */
 void WstCompositorFocusClientByName( WstCompositor *wctx, const char *name);
 
+/**
+ * WstCompositorVirtualEmbeddedSetSurfaceOwner
+ *
+ * Move a surface from one virtual embedded compositor to another
+ */
+bool WstCompositorVirtualEmbeddedSetSurfaceOwner( WstCompositor *wctx, int surfaceId );
+
+/**
+ * WstCompositorHasSurface
+ *
+ * returns true if compositor has a surface with a given id
+ */
+bool WstCompositorHasSurface( WstCompositor *wctx, int surfaceId );
+
+
+/**
+ * WstCompositorHasSurface
+ *
+ * returns a list of surface ids for a compositor
+ */
+bool WstCompositorGetSurfaceIds( WstCompositor *wctx, std::vector<int> &surfaceIds );
+
 #endif
 
