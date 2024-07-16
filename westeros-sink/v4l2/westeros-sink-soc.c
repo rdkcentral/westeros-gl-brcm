@@ -628,13 +628,26 @@ static GstFlowReturn wstChain(GstPad *pad, GstObject *parent, GstBuffer *buf)
             GST_LOG("wstChain: buffer duration not available");
          }
       }
-      if ( GST_CLOCK_TIME_IS_VALID(duration) && GST_CLOCK_TIME_IS_VALID(pts) &&
-           (pts+duration <= sink->segment.start) )
+      /* allow out-of-segment buffers to pass to the decoder and ensure
+         basesink doesn't signal preroll until we have sent the
+         first frame to display */
+      if ( (GST_CLOCK_TIME_IS_VALID(duration) && GST_CLOCK_TIME_IS_VALID(pts) &&
+            (pts+duration <= sink->segment.start)) ||
+           (sink->soc.videoPaused && sink->soc.startedOutOfSegment && (sink->soc.frameOutCount == 0) ) )
       {
+         if ( (sink->soc.frameInCount == 0) && (pts+duration < sink->segment.start) )
+         {
+            sink->soc.startedOutOfSegment= TRUE;
+         }
          GST_LOG("wstChain: accept buf %p pts %lld segment start %lld", buf, pts, sink->segment.start);
          GST_BASE_SINK_PREROLL_LOCK(GST_BASE_SINK(sink));
          gst_westeros_sink_soc_render( sink, buf );
          GST_BASE_SINK_PREROLL_UNLOCK(GST_BASE_SINK(sink));
+         if ( sink->soc.videoPaused && sink->soc.startedOutOfSegment && (sink->soc.frameOutCount == 0) )
+         {
+            gst_buffer_unref( buf );
+            return GST_FLOW_OK;
+         }
       }
    }
 
@@ -959,13 +972,14 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.prevFrameTimeGfx= 0;
    sink->soc.prevFramePTSGfx= 0;
    sink->soc.isSourceDTV= FALSE;
+   sink->soc.startedOutOfSegment= FALSE;
    sink->soc.videoX= sink->windowX;
    sink->soc.videoY= sink->windowY;
    sink->soc.videoWidth= sink->windowWidth;
    sink->soc.videoHeight= sink->windowHeight;
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
-   sink->soc.frameStepOnPreroll= TRUE;
+   sink->soc.frameStepOnPreroll= FALSE;
    sink->soc.lowMemoryMode= FALSE;
    sink->soc.forceAspectRatio= FALSE;
    sink->soc.secureVideo= FALSE;
@@ -2349,6 +2363,7 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    sink->soc.videoStartTime= 0;
    sink->soc.lastBuffer= 0;
    sink->soc.prerollBuffer= 0;
+   sink->soc.startedOutOfSegment= FALSE;
    wstFlushPixelAspectRatio( sink, false );
    #ifdef USE_GST_AFD
    wstFlushAFDInfo( sink, false );
@@ -2653,6 +2668,7 @@ static void wstSinkSocStopVideo( GstWesterosSink *sink )
    sink->soc.frameRate= 0.0;
    sink->soc.frameRateFractionNum= 0;
    sink->soc.frameRateFractionDenom= 0;
+   sink->soc.startedOutOfSegment= FALSE;
    sink->soc.pixelAspectRatio= 1.0;
    wstFlushPixelAspectRatio( sink, true );
    #ifdef USE_GST_AFD
@@ -5866,6 +5882,7 @@ static bool wstLocalRateControl( GstWesterosSink *sink, int buffIndex )
    WstVideoClientConnection *conn= sink->soc.conn;
    gint64 framePTS;
    gint64 currFrameTime;
+   gint64 frameDuration= 0;
 
    if ( !sink->soc.outBuffers )
    {
@@ -5873,8 +5890,12 @@ static bool wstLocalRateControl( GstWesterosSink *sink, int buffIndex )
    }
 
    framePTS= sink->soc.outBuffers[buffIndex].frameTime;
+   if ( sink->soc.frameRate != 0.0 )
+   {
+      frameDuration= 1000000LL/sink->soc.frameRate;
+   }
 
-   if ( framePTS < sink->segment.start/1000LL )
+   if ( framePTS+frameDuration < sink->segment.start/1000LL )
    {
       FRAME("out:       drop out-of-segment frame");
       drop= true;

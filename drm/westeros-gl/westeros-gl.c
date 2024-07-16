@@ -253,6 +253,7 @@ typedef struct _VideoFrameManager
    VideoFrame *queue;
    pthread_mutex_t mutex;
    bool paused;
+   bool flushed;
    bool resetBaseTime;
    bool frameAdvance;
    float rate;
@@ -1477,6 +1478,7 @@ static void wstVideoServerFlush( VideoServerConnection *conn )
    {
       conn->videoPlane->vfm->expireLimit= expireLimit;
       conn->videoPlane->vfm->paused= paused;
+      conn->videoPlane->vfm->flushed= true;
       #ifdef USE_GENERIC_AVSYNC
       conn->videoPlane->vfm->avscFd= avscFd;
       conn->videoPlane->vfm->avscSize= avscSize;
@@ -3919,6 +3921,7 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
          {
             f->canExpire= !vfm->frameAdvance;
             vfm->flipTimeCurrent= vfm->vblankTime;
+            vfm->flushed= false;
          }
          if ( f->canExpire && (vfm->vblankTime - vfm->flipTimeCurrent) > expireLimit )
          {
@@ -3962,12 +3965,13 @@ static VideoFrame* wstVideoFrameManagerPopFrame( VideoFrameManager *vfm )
             FRAME("Popping frame, clear frameAdvance");
          }
       }
-      else if ( vfm->paused && vfm->frameAdvance && (vfm->bufferIdCurrent == -1) && vfm->queueSize )
+      else if ( vfm->paused && (vfm->frameAdvance || vfm->flushed) && (vfm->bufferIdCurrent == -1) && vfm->queueSize )
       {
          f= &vfm->queue[0];
          f->canExpire= false;
          f->advanced= true;
          vfm->frameAdvance= false;
+         vfm->flushed= false;
       }
       goto done;
    }
