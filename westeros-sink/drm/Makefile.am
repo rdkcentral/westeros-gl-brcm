@@ -35,7 +35,16 @@ libgstwesterossink_la_SOURCES = westeros-sink.c westeros-sink-soc.c
 libgstwesterossink_la_CFLAGS= \
    $(AM_CFLAGS) \
    $(GST_CFLAGS)
-   
+
+if HAVE_PIPELINE_LOGGING
+AM_CFLAGS += -DUSE_PIPELINE_LOGGING
+libgstwesterossink_la_SOURCES +=  pipeline_logger.cpp
+libgstwesterossink_la_CXXFLAGS= \
+   $(AM_CFLAGS) \
+   $(GST_CFLAGS)
+endif
+
+
 libgstwesterossink_la_LDFLAGS= \
    $(AM_LDFLAGS) \
    $(GST_LIBS)  $(GSTBASE_LIBS) $(WAYLANDLIB) -avoid-version \

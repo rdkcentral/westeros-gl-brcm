@@ -48,7 +48,17 @@ libgstwesterosrawsink_la_CFLAGS= \
    $(AM_CFLAGS) \
    $(GST_CFLAGS) \
    -I${STAGING_INCDIR}/libdrm
-   
+
+if HAVE_PIPELINE_LOGGING
+AM_CFLAGS += -DUSE_PIPELINE_LOGGING
+libgstwesterossink_la_SOURCES +=  pipeline_logger.cpp
+libgstwesterosrawsink_la_CXXFLAGS= \
+   $(AM_CFLAGS) \
+   $(GST_CFLAGS) \
+   -I${STAGING_INCDIR}/libdrm
+endif
+
+
 libgstwesterosrawsink_la_LDFLAGS= \
    $(AM_LDFLAGS) \
    $(GST_LIBS)  $(GSTBASE_LIBS) $(WAYLANDLIB) -avoid-version \

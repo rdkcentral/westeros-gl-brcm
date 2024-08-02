@@ -21,6 +21,13 @@ AM_CPPFLAGS = -pthread -Wall -DEMU -I./
 plugin_LTLIBRARIES = libgstwesterossink.la
 libgstwesterossink_la_SOURCES =  westeros-sink.c  westeros-sink-soc.c
 libgstwesterossink_la_CFLAGS =  $(GST_CFLAGS) $(WAYLAND_CLIENT_CFLAGS) $(WAYLAND_SERVER_CFLAGS)
+
+if HAVE_PIPELINE_LOGGING
+AM_CFLAGS += -DUSE_PIPELINE_LOGGING
+libgstwesterossink_la_SOURCES +=  pipeline_logger.cpp
+libgstwesterossink_la_CXXFLAGS =  $(GST_CFLAGS) $(WAYLAND_CLIENT_CFLAGS) $(WAYLAND_SERVER_CFLAGS)
+endif
+
 libgstwesterossink_la_LDFLAGS = $(GST_LIBS) 
 libgstwesterossink_la_LIBADD = -lwayland-client -lgstvideo-1.0 -lgstreamer-1.0 -lgstbase-1.0 -lwesteros_simplebuffer_client -lwesteros_simpleshell_client -lessosrmgr -lwesteros_compositor -lgstvideo-1.0 -ldl -lEGL
 libgstwesterossink_la_LDFLAGS += -module -avoid-version

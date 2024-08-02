@@ -44,6 +44,15 @@ plugin_LTLIBRARIES = libgstwesterossink.la
 
 libgstwesterossink_la_SOURCES = westeros-sink.c westeros-sink-soc.c
 
+if HAVE_PIPELINE_LOGGING
+AM_CFLAGS += -DUSE_PIPELINE_LOGGING
+libgstwesterossink_la_SOURCES +=  pipeline_logger.cpp
+libgstwesterossink_la_CXXFLAGS=  \
+   $(AM_CFLAGS) \
+   $(GST_CFLAGS) \
+   -I${STAGING_INCDIR}/libdrm
+endif
+
 libgstwesterossink_la_CFLAGS= \
    $(AM_CFLAGS) \
    $(GST_CFLAGS) \

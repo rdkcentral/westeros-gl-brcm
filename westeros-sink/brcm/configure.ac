@@ -80,6 +80,15 @@ AS_IF([test "x$have_gst1" != "xyes"], [
   PKG_CHECK_MODULES([GSTBASE], [gstreamer-base-0.10 >= 0.10.28])
 ], [])
 
+AC_ARG_ENABLE(pipeline-logger,
+  AS_HELP_STRING([--enable-pipeline-logger], [Enable pipeline logger]),
+  [case "${enableval}" in
+        yes) pipeline_logger=true ;;
+        no)  pipeline_logger=false ;;
+        *) AC_MSG_ERROR([bad value ${enableval} for --enable-pipeline-logger]) ;;
+    esac],
+  [pipeline_logger=false])
+
 plugindir="\$(libdir)/gstreamer-$GST_MAJORMINOR"
 
 PKG_CHECK_MODULES([GLIB],[glib-2.0 >= 2.22.5])
@@ -88,6 +97,7 @@ PKG_CHECK_MODULES([WAYLAND_CLIENT],[wayland-client >= 1.6.0])
 PKG_CHECK_MODULES([WAYLAND_SERVER],[wayland-server >= 1.6.0])
 
 AM_CONDITIONAL([HAVE_GST_VIDEO], [test x$GST_VIDEO_DETECTED = xtrue])
+AM_CONDITIONAL([HAVE_PIPELINE_LOGGING], [test x$pipeline_logger = xtrue])
 
 WAYLANDLIB="-lwayland-client"
 AC_SUBST(WAYLANDLIB)
