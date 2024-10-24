@@ -221,6 +221,11 @@ static void wstSVPTerm( GstWesterosSink *sink )
    /* Any needed cleanup */
 }
 
+#ifdef ENABLE_FIFO
+#define FRAME_INFO_FIFO "/tmp/frameinfo"
+#define FRAME_INFO_FIFO_SIZE (32)
+#endif
+
 static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
 {
    GstStructure *structure;
@@ -251,10 +256,56 @@ static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
          sink->soc.dvEnhancementLayerPresent= -1;
       }
 
-      if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) )
+      if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) || sink->soc.haveColorimetry)
       {
-         GST_DEBUG("dv change");
-         sink->soc.codecChange= TRUE;
+          if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) ) {
+              GST_DEBUG("dv change\n");
+              sink->soc.codecChange= TRUE;
+          } else
+              GST_DEBUG("hdr change\n");
+#ifdef  ENABLE_FIFO
+
+        {
+           int fifo_fd = -1;
+           char write_msg[FRAME_INFO_FIFO_SIZE];
+           gint width, height;
+
+            if ( gst_structure_get_int( structure, "width", &width ) &&
+                 gst_structure_get_int( structure, "height", &height ) )
+            {
+               fifo_fd = open(FRAME_INFO_FIFO, O_WRONLY | O_NONBLOCK);
+               if (fifo_fd == -1) {
+                  if (errno == ENXIO) {
+                     GST_DEBUG("No reading process is currently connected to the FIFO\n");
+                  } else {
+                     GST_DEBUG("Failed to open FIFO for writing %d\n", errno);
+                  }
+               }
+               else
+               {
+                  int hdr_type = 1;
+                  if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) )
+                      hdr_type = 3;
+                  else if ( sink->soc.hdrColorimetry[3] == GST_VIDEO_COLOR_PRIMARIES_BT2020) {
+                      if ( (sink->soc.hdrColorimetry[2] == GST_VIDEO_TRANSFER_BT2020_10) ||
+                                (sink->soc.hdrColorimetry[2] == GST_VIDEO_TRANSFER_ARIB_STD_B67))
+                          hdr_type = 5;
+                  } else
+                      hdr_type = 6;
+                  snprintf (write_msg, FRAME_INFO_FIFO_SIZE, "%d, %d, %d", width, height, hdr_type);
+                  ssize_t num_bytes = write(fifo_fd, write_msg, FRAME_INFO_FIFO_SIZE);
+                  if (num_bytes == -1) {
+                     if (errno == EAGAIN) {
+                        GST_DEBUG("FIFO buffer is full, ignore it\n");
+                     } else {
+                        GST_DEBUG("Failed to write\n");
+                     }
+                  }
+                  close(fifo_fd);
+               }
+            }
+        }
+#endif
       }
    }
 }
