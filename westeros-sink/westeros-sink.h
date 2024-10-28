@@ -124,6 +124,8 @@ struct _GstWesterosSink
    int maxWidth;
    int maxHeight;
 
+   double frameRate;
+
    int windowX;
    int windowY;
    int windowWidth;

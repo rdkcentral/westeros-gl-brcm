@@ -811,7 +811,9 @@ static void timeCodeAdd( GstWesterosSink *sink, guint64 pts, guint hours, guint 
    {
       goto exit;
    }
-   position= pts / (GST_SECOND/90000LL);
+
+   // Compute time code postion in the same way we track position elsewhere in the system
+   position= ((pts / GST_SECOND) * 90000) + (((pts % GST_SECOND) * 90000) / GST_SECOND);
    if ( sink->timeCodeCount )
    {
       for( i= 0; i < sink->timeCodeCount; ++i )
@@ -880,6 +882,32 @@ static void timeCodeFlush( GstWesterosSink *sink )
    #endif
 }
 
+// Is the position within 1/2 a frame cadence of a time code
+static bool timeCodeFound(guint64 position, WstSinkTimeCode timeCode, double frameRate)
+{
+   bool     bFound   = false;
+   guint64  fuzz     = 0;
+
+   if(frameRate <= 0.0)
+   {
+      // No frameRate data, so just check for exact match with a fuzz of 1/90Khz (11us)
+      fuzz = 1;
+   }
+   else
+   {
+      // Calculate a fuzz factor based on the frame rate
+      // fuzz is half the time between frames
+      fuzz = (guint64)(90000.0 / (frameRate)) / 2;
+   }
+
+   // Does the position match the time code within the fuzz factor
+   bFound = (timeCode.position == position ||
+             timeCode.position >= position - fuzz ||
+             timeCode.position < position + fuzz);
+
+   return bFound;
+}
+
 static void timeCodePresent( GstWesterosSink *sink, guint64 position, guint signal )
 {
    /* Must be called with sink lock */
@@ -890,7 +918,7 @@ static void timeCodePresent( GstWesterosSink *sink, guint64 position, guint sign
    position= sink->currentPTS;
    for( i= 0; i < sink->timeCodeCount; ++i )
    {
-      if ( sink->timeCodes[i].position == position )
+      if (timeCodeFound(position, sink->timeCodes[i], sink->frameRate) == true)
       {
          found= true;
          hours= sink->timeCodes[i].hours;
@@ -1219,6 +1247,8 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->srcHeight= 0;
    sink->maxWidth= 0;
    sink->maxHeight= 0;
+
+   sink->frameRate= 0.0;
 
    sink->windowX= DEFAULT_WINDOW_X;
    sink->windowY= DEFAULT_WINDOW_Y;
@@ -1924,26 +1954,48 @@ static gboolean gst_westeros_sink_event(GstPad *pad, GstEvent *event)
          {
             GstCaps *caps;
             gst_event_parse_caps(event, &caps);
-            if (sink->maxWidth && sink->maxHeight)
+            GstStructure *structure = gst_caps_get_structure(caps, 0);
+            if (structure)
             {
-               GstStructure* structure = gst_caps_get_structure(caps, 0);
-               if (structure && (gst_structure_has_field(structure, "width") || gst_structure_has_field(structure, "height")))
+               if (sink->maxWidth && sink->maxHeight)
                {
-                  gint width, height;
-                  gst_structure_get_int(structure, "width", &width);
-                  gst_structure_get_int(structure, "height", &height);
-                  if (width > sink->maxWidth || height > sink->maxHeight)
+                  if (gst_structure_has_field(structure, "width") || gst_structure_has_field(structure, "height"))
                   {
-                     GST_ERROR("width=%d height=%d > maxWidth=%d maxHeight=%d", width, height, sink->maxWidth, sink->maxHeight);
-                     const char *err_string = "Maximum video dimensions exceeded";
-                     GError *error = g_error_new(GST_STREAM_ERROR, GST_STREAM_ERROR_WRONG_TYPE, "%s", err_string);
-                     GstMessage *message = gst_message_new_error(GST_OBJECT_CAST(sink), error, err_string);
-                     gst_element_post_message(GST_ELEMENT_CAST(sink), message);
-                     g_error_free(error);
+                     gint width, height;
+                     gst_structure_get_int(structure, "width", &width);
+                     gst_structure_get_int(structure, "height", &height);
+                     if (width > sink->maxWidth || height > sink->maxHeight)
+                     {
+                        GST_ERROR("width=%d height=%d > maxWidth=%d maxHeight=%d", width, height, sink->maxWidth, sink->maxHeight);
+                        const char *err_string = "Maximum video dimensions exceeded";
+                        GError *error = g_error_new(GST_STREAM_ERROR, GST_STREAM_ERROR_WRONG_TYPE, "%s", err_string);
+                        GstMessage *message = gst_message_new_error(GST_OBJECT_CAST(sink), error, err_string);
+                        gst_element_post_message(GST_ELEMENT_CAST(sink), message);
+                        g_error_free(error);
+                     }
+                  }
+               }
+               if (sink->frameRate != -1.0)
+               {
+                  // Framerate calculation
+                  gint num = 0;
+                  gint denom = 0;
+                  if (gst_structure_get_fraction(structure, "framerate", &num, &denom))
+                  {
+                     // Protect against divide by zero
+                     if (denom == 0)
+                        denom = 1;
+
+                     sink->frameRate = (double)num / (double)denom;
+                     if (sink->frameRate <= 0.0)
+                     {
+                        g_print("westeros-sink: caps have framerate of 0 - using 60.0\n");
+                        sink->frameRate = 60.0;
+                     }
                   }
                }
             }
-            #ifdef ENABLE_SW_DECODE
+#ifdef ENABLE_SW_DECODE
             if ( sink->rm && (sink->resCurrCaps.capabilities & EssRMgrVidCap_software) )
             {
                wstsw_process_caps( sink, caps );
