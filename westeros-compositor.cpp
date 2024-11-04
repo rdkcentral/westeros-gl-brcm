@@ -362,6 +362,8 @@ typedef struct _WstClientInfo
    WstSurface *surface;
    WstCompositor *wctx;
    bool usesXdgShell;
+   WstContext *ctx;
+   struct wl_listener destroyListener;
 } WstClientInfo;
 
 typedef struct _WstOutput
@@ -4004,6 +4006,10 @@ exit:
       std::map<struct wl_client*,WstClientInfo*>::iterator it= ctx->clientInfoMap.begin();
       wl_client *client= it->first;
       WstClientInfo *clientInfo= it->second;
+      if ( clientInfo )
+      {
+         wl_list_remove( &clientInfo->destroyListener.link );
+      }
       ctx->clientInfoMap.erase( it );
       if ( client )
       {
@@ -5345,6 +5351,7 @@ static void wstDestroyCompositorCallback(struct wl_resource *resource)
       {
           WstClientInfo *clientInfo= (WstClientInfo*)it->second;
           ctx->clientInfoMap.erase( it );
+          wl_list_remove( &clientInfo->destroyListener.link );
           free( clientInfo );
           break;
       }
@@ -5913,6 +5920,35 @@ static WstSurfaceInfo* wstGetSurfaceInfo( WstContext *ctx, struct wl_resource *r
    return surfaceInfo;
 }
 
+static void wstClientDestroyed( struct wl_listener *listener, void *data )
+{
+    struct wl_client *client = reinterpret_cast<struct wl_client *>( data );
+
+    DEBUG("wstClientDestroyed: client %p destroyed", client );
+
+    WstClientInfo *clientInfo;
+    clientInfo = wl_container_of( listener, clientInfo, destroyListener );
+    wl_list_remove( &clientInfo->destroyListener.link );
+
+    if ( clientInfo->ctx )
+    {
+        WstContext *ctx = clientInfo->ctx;
+
+        std::map<struct wl_client*,WstClientInfo*>::iterator it= ctx->clientInfoMap.find( client );
+        if ( it != ctx->clientInfoMap.end() )
+        {
+            clientInfo = it->second;
+            ctx->clientInfoMap.erase( it );
+        }
+
+        free( clientInfo );
+    }
+    else
+    {
+        WARNING("wstClientDestroyed: clientInfo->ctx not set" );
+    }
+}
+
 static void wstUpdateClientInfo( WstContext *ctx, struct wl_client *client, struct wl_resource *resource )
 {
    WstClientInfo *clientInfo= 0;
@@ -5930,6 +5966,10 @@ static void wstUpdateClientInfo( WstContext *ctx, struct wl_client *client, stru
       {
          DEBUG("wstUpdateClientInfo: create clientInfo for client %p", client );
          ctx->clientInfoMap.insert( std::pair<struct wl_client*,WstClientInfo*>(client, clientInfo) );
+
+         clientInfo->ctx = ctx;
+         clientInfo->destroyListener.notify = wstClientDestroyed;
+         wl_client_add_destroy_listener( client, &clientInfo->destroyListener );
       }
    }   
    if ( clientInfo )
