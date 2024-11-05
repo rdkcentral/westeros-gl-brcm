@@ -4115,18 +4115,14 @@ static void essFreeInputDevice( EssInputDevice *idev )
 
 static void essFreeInputDevices( EssCtx *ctx )
 {
-   std::vector<EssInputDevice*>::iterator it= ctx->inputDevices.begin();
-   while ( it != ctx->inputDevices.end() )
-   {
-      EssInputDevice *idev= (*it);
-      if ( idev )
-      {
-         it= ctx->inputDevices.erase( it );
-         essFreeInputDevice( idev );
-         continue;
-      }
-      ++it;
-   }
+    for (EssInputDevice *idev : ctx->inputDevices)
+    {
+        if (idev)
+        {
+            essFreeInputDevice(idev);
+        }
+    }
+    ctx->inputDevices.clear();
 }
 
 static void essValidateInputDevices( EssCtx *ctx )
