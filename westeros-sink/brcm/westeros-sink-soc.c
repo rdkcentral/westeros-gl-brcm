@@ -862,7 +862,6 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.positionResourcesLost= 0;
    sink->soc.haveHardware= FALSE;
    sink->soc.logLatency= false;
-   sink->soc.saveAllm= ALLM_NOT_SAVED;
    #ifdef ENABLE_SW_DECODE
    sink->soc.dataProbeNeedStartCodes= FALSE;
    sink->soc.dataProbePad= 0;
@@ -4634,17 +4633,6 @@ static void updateVideoDecoderSettings( GstWesterosSink *sink )
       {
          GST_WARNING("updateVideoDecoderSettings: NEXUS_SimpleVideoDecoder_SetClientSettings failed rc %d", rc);
       }
-
-      NxClient_DisplaySettings displaySettings;
-      NxClient_GetDisplaySettings(&displaySettings);
-      sink->soc.saveAllm= displaySettings.hdmiPreferences.allm ? ALLM_TRUE : ALLM_FALSE;
-      displaySettings.hdmiPreferences.allm= true;
-      GST_LOG("updateVideoDecoderSettings: settings displaySettings.hdmiPreferences.allm %d", displaySettings.hdmiPreferences.allm);
-      rc = NxClient_SetDisplaySettings(&displaySettings);
-      if ( rc != NEXUS_SUCCESS )
-      {
-         GST_WARNING("updateVideoDecoderSettings: NxClient_SetDisplaySettings failed rc %d", rc);
-      }
    }
    #endif
 }
@@ -4795,23 +4783,6 @@ static void sinkReleaseVideo( GstWesterosSink *sink )
    LOCK( sink );
    gboolean started= sink->videoStarted;
    sink->videoStarted= FALSE;
-   #if NEXUS_COMMON_PLATFORM_VERSION >= NEXUS_PLATFORM_VERSION(20,1)
-   if ( sink->soc.saveAllm != ALLM_NOT_SAVED )
-   {
-      NEXUS_Error rc;
-      NxClient_DisplaySettings displaySettings;
-      NxClient_GetDisplaySettings(&displaySettings);
-      /* restore settting */
-      displaySettings.hdmiPreferences.allm= ( sink->soc.saveAllm == ALLM_TRUE ) ? true : false;
-      sink->soc.saveAllm= ALLM_NOT_SAVED;
-      GST_LOG("sinkReleaseVideo: restoring displaySettings.hdmiPreferences.allm %d", displaySettings.hdmiPreferences.allm );
-      rc= NxClient_SetDisplaySettings(&displaySettings);
-      if ( rc != NEXUS_SUCCESS )
-      {
-         GST_WARNING("sinkReleaseVideo: NxClient_SetDisplaySettings failed rc %d", rc);
-      }
-   }
-   #endif
    if ( sink->soc.videoDecoder )
    {
       NEXUS_SimpleVideoDecoderHandle videoDecoder= sink->soc.videoDecoder;

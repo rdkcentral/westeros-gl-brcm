@@ -35,13 +35,6 @@
 
 #define NUM_CAPTURE_SURFACES (NEXUS_SIMPLE_DECODER_MAX_SURFACES)
 
-enum
-{
-   ALLM_FALSE,
-   ALLM_TRUE,
-   ALLM_NOT_SAVED
-};
-
 struct _GstWesterosSinkSoc
 {
    int captureWidth;
@@ -125,7 +118,6 @@ struct _GstWesterosSinkSoc
    gboolean secureVideo;
    gboolean haveHardware;
    gboolean logLatency;
-   int saveAllm;
    #ifdef ENABLE_SW_DECODE
    GstPad *dataProbePad;
    gboolean dataProbeNeedStartCodes;
