@@ -181,7 +181,7 @@ static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendKeepFrameVideoClientConnection( WstVideoClientConnection *conn );
 static void wstWaitForLastFrame( GstWesterosSink *sink );
 static void wstDecoderReset( GstWesterosSink *sink, bool hard );
-static void wstGetVideoBounds( GstWesterosSink *sink, int *x, int *y, int *w, int *h );
+static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int *h, bool actualVideoPlacement);
 static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, int vh );
 static void wstProcessTextureSignal( GstWesterosSink *sink, int buffIndex );
 static bool wstProcessTextureWayland( GstWesterosSink *sink, int buffIndex );
@@ -330,26 +330,6 @@ static char *wstOutFullness( GstWesterosSink *sink )
       return desc;
    }
    return NULL;
-}
-
-static bool wstApproxEqual( double v1, double v2 )
-{
-   bool result= false;
-   if ( v1 >= v2 )
-   {
-      if ( (v1-v2) < 0.01 )
-      {
-         result= true;
-      }
-   }
-   else
-   {
-      if ( (v2-v1) < 0.01 )
-      {
-         result= true;
-      }
-   }
-   return result;
 }
 
 static void sbFormat(void *data, struct wl_sb *wl_sb, uint32_t format)
@@ -1582,7 +1562,7 @@ gboolean gst_westeros_sink_soc_ready_to_null( GstWesterosSink *sink, gboolean *p
    gboolean keepLastFrame;
 
    if ( sink->soc.keepLastFrameChanged && !sink->soc.conn &&
-        !sink->rm || (sink->resAssignedId >= 0) )
+        (!sink->rm || (sink->resAssignedId >= 0)) )
    {
       /* if keepLastFrame has been set prior to establishing a
          connection to the video server and we are assigned a resource,
@@ -2515,7 +2495,7 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
       sink->soc.videoWidth= sink->windowWidth;
       sink->soc.videoHeight= sink->windowHeight;
 
-      wstGetVideoBounds( sink, &vx, &vy, &vw, &vh );
+      wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
       wstSetTextureCrop( sink, vx, vy, vw, vh );
 
       sink->soc.videoX= tx;
@@ -3155,7 +3135,7 @@ static void wstProcessEvents( GstWesterosSink *sink )
                   sink->soc.videoWidth= sink->windowWidth;
                   sink->soc.videoHeight= sink->windowHeight;
 
-                  wstGetVideoBounds( sink, &vx, &vy, &vw, &vh );
+                  wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
                   wstSetTextureCrop( sink, vx, vy, vw, vh );
 
                   sink->soc.videoX= tx;
@@ -4759,7 +4739,7 @@ static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn )
       vh= sink->soc.videoHeight;
       if ( needBounds(sink) )
       {
-         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh );
+         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
       }
 
       msg.msg_name= NULL;
@@ -5619,7 +5599,7 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
          vh= sink->soc.videoHeight;
          if ( needBounds(sink) )
          {
-            wstGetVideoBounds( sink, &vx, &vy, &vw, &vh );
+            wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, true );
          }
 
          i= 0;
@@ -5947,207 +5927,245 @@ exit:
    return drop;
 }
 
-static void wstGetVideoBounds( GstWesterosSink *sink, int *x, int *y, int *w, int *h )
+static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int *h, bool actualVideoPlacement) 
 {
    int vx, vy, vw, vh;
-   int frameWidth, frameHeight;
-   int zoomMode;;
+   int ox, oy, ow, oh;
+   int afd = GST_VIDEO_AFD_UNAVAILABLE;
+   int zoomMode;
    double contentWidth, contentHeight;
-   double roix, roiy, roiw, roih;
-   double arf, ard;
-   double hfactor= 1.0, vfactor= 1.0;
-   vx= sink->soc.videoX;
-   vy= sink->soc.videoY;
-   vw= sink->soc.videoWidth;
-   vh= sink->soc.videoHeight;
-   if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("pixelAspectRatio: %f zoom-mode %d overscan-size %d", sink->soc.pixelAspectRatio, sink->soc.zoomMode, sink->soc.overscanSize );
-   frameWidth= sink->soc.frameWidth;
-   frameHeight= sink->soc.frameHeight;
-   contentWidth= frameWidth*sink->soc.pixelAspectRatio;
-   contentHeight= frameHeight;
-   if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("frame %dx%d contentWidth: %f contentHeight %f", frameWidth, frameHeight, contentWidth, contentHeight );
-   ard= (double)sink->soc.videoWidth/(double)sink->soc.videoHeight;
-   arf= (double)contentWidth/(double)contentHeight;
-
-   /* Establish region of interest */
-   roix= 0;
-   roiy= 0;
-   roiw= contentWidth;
-   roih= contentHeight;
-
-   zoomMode= sink->soc.zoomMode;
-   if ( !sink->soc.allow4kZoom &&
-        ((sink->soc.frameWidthStream > 1920) || (sink->soc.frameHeightStream > 1080)) )
+   double arf, ard, aro;
+   double stretchFactor = 1.0;
+   double overscanFactor = 1.0;
+   double srcCropFactor = 1.0;
+   if (actualVideoPlacement) 
    {
-      zoomMode= ZOOM_NORMAL;
-      if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("4k (%dx%d) force zoom mormal", sink->soc.frameWidthStream, sink->soc.frameHeightStream);
+      overscanFactor = (1.0 / (1.0 - (2.0 * sink->soc.overscanSize / 100.0)));
    }
-   if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("ard %f arf %f", ard, arf);
-   switch( zoomMode )
+   vx = sink->soc.videoX;
+   vy = sink->soc.videoY;
+   vw = sink->soc.videoWidth;
+   vh = sink->soc.videoHeight;
+   ox = sink->windowX;
+   oy = sink->windowY;
+   ow = sink->windowWidth;
+   oh = sink->windowHeight;
+   if (sink->soc.pixelAspectRatioChanged || !actualVideoPlacement) GST_INFO("pixelAspectRatio: %f zoom-mode %d overscan-size %d actualVideoPlacement %d", sink->soc.pixelAspectRatio, sink->soc.zoomMode, sink->soc.overscanSize, actualVideoPlacement);
+   contentWidth = sink->soc.frameWidth * sink->soc.pixelAspectRatio;
+   contentHeight = sink->soc.frameHeight;
+   zoomMode = sink->soc.zoomMode;
+   if (sink->soc.pixelAspectRatioChanged || !actualVideoPlacement) GST_INFO("frame %dx%d contentWidth: %f contentHeight %f", sink->soc.frameWidth, sink->soc.frameHeight, contentWidth, contentHeight);
+   ard = (double)sink->soc.videoWidth / (double)sink->soc.videoHeight;
+   arf = (double)contentWidth / (double)contentHeight;
+   aro = arf;
+#ifdef USE_GST_AFD
+   afd = sink->soc.afdActive.afd;
+#endif
+   switch (afd) 
    {
-      case ZOOM_NORMAL:
-         {
-            if ( arf >= ard )
-            {
-               vw= sink->soc.videoWidth * (1.0+(2.0*sink->soc.overscanSize/100.0));
-               vh= (roih * vw) / roiw;
-               vx= vx+(sink->soc.videoWidth-vw)/2;
-               vy= vy+(sink->soc.videoHeight-vh)/2;
-            }
-            else
-            {
-               vh= sink->soc.videoHeight * (1.0+(2.0*sink->soc.overscanSize/100.0));
-               vw= (roiw * vh) / roih;
-               vx= vx+(sink->soc.videoWidth-vw)/2;
-               vy= vy+(sink->soc.videoHeight-vh)/2;
-            }
+      case GST_VIDEO_AFD_UNAVAILABLE:
+         /* no break - assume active content is full frame */
+      case GST_VIDEO_AFD_4_3_FULL_16_9_FULL: /* AFD 8 (1000) */
+         /* 16:9 and 4:3 content are full frame */
+         break;
+      case GST_VIDEO_AFD_4_3_FULL_4_3_PILLAR: /* AFD 9 (1001) */
+         /* 4:3 content is full frame */
+         /* 16:9 content is 4:3 roi horizontally centered */
+         if (arf > (4.0 / 3.0))
+         { 
+            /* 16:9 */
+            stretchFactor = 16.0 / 12.0;
+            aro = 4.0 / 3.0;
          }
          break;
-      case ZOOM_NONE:
-      case ZOOM_DIRECT:
+      case GST_VIDEO_AFD_14_9_LETTER_14_9_PILLAR: /* AFD 11 (1011) */
+         /* 4:3 contains 14:9 letterbox vertically centered */
+         /* 16:9 contains 14:9 pillarbox horizontally centered */
+         if (arf > (4.0 / 3.0))
          {
-            if ( arf >= ard )
-            {
-               vh= (contentHeight * sink->soc.videoWidth) / contentWidth;
-               vy= vy+(sink->soc.videoHeight-vh)/2;
-            }
-            else
-            {
-               vw= (contentWidth * sink->soc.videoHeight) / contentHeight;
-               vx= vx+(sink->soc.videoWidth-vw)/2;
-            }
-         }
-         break;
-      case ZOOM_16_9_STRETCH:
-         {
-            if ( wstApproxEqual(arf, ard) && wstApproxEqual(arf, 1.777) )
-            {
-               /* For 16:9 content on a 16:9 display, stretch as though 4:3 */
-               hfactor= 4.0/3.0;
-               if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("stretch apply vfactor %f hfactor %f", vfactor, hfactor);
-            }
-            vh= sink->soc.videoHeight * (1.0+(2.0*sink->soc.overscanSize/100.0));
-            vw= vh*hfactor*16/9;
-            vx= vx+(sink->soc.videoWidth-vw)/2;
-            vy= vy+(sink->soc.videoHeight-vh)/2;
-         }
-         break;
-      case ZOOM_4_3_PILLARBOX:
-         {
-            vh= sink->soc.videoHeight * (1.0+(2.0*sink->soc.overscanSize/100.0));
-            vw= vh*4/3;
-            vx= vx+(sink->soc.videoWidth-vw)/2;
-            vy= vy+(sink->soc.videoHeight-vh)/2;
-         }
-         break;
-      case ZOOM_ZOOM:
-         {
-            #ifdef USE_GST_AFD
-            /* Adjust region of interest based on AFD+Bars */
-            if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("afd %d haveBar %d isLetterbox %d d1 %d d2 %d", sink->soc.afdActive.afd, sink->soc.afdActive.haveBar,
-                                                                sink->soc.afdActive.isLetterbox, sink->soc.afdActive.d1, sink->soc.afdActive.d2 );
-            switch ( sink->soc.afdActive.afd )
-            {
-               case GST_VIDEO_AFD_4_3_FULL_16_9_FULL: /* AFD 8 (1000) */
-                  /* 16:9 and 4:3 content are full frame */
-                  break;
-               case GST_VIDEO_AFD_14_9_LETTER_14_9_PILLAR: /* AFD 11 (1011) */
-                  /* 4:3 contains 14:9 letterbox vertically centered */
-                  /* 16:9 contains 14:9 pillarbox horizontally centered */
-                  break;
-               case GST_VIDEO_AFD_4_3_FULL_14_9_CENTER: /* AFD 13 (1101) */
-                  /* 4:3 content is full frame */
-                  /* 16:9 contains 4:3 pillarbox */
-                  break;
-               case GST_VIDEO_AFD_GREATER_THAN_16_9: /* AFD 4 (0100) */
-                  /* 4:3 contains letterbox image with aspect ratio > 16:9 vertically centered */
-                  /* 16:9 contains letterbox image with aspect ratio > 16:9 */
-                  /* should be accompanied by bar data */
-                  if ( sink->soc.afdActive.haveBar )
-                  {
-                     int activeHeight= roih-sink->soc.afdActive.d1;
-                     if ( activeHeight > 0 )
-                     {
-                        /* ignore bar data for now
-                        hfactor= 1.0;
-                        vfactor= roiw/activeHeight;
-                        arf= ard;
-                        */
-                     }
-                  }
-                  break;
-               case GST_VIDEO_AFD_4_3_FULL_4_3_PILLAR: /* AFD 9 (1001) */
-                  /* 4:3 content is full frame */
-                  /* 16:9 content is 4:3 roi horizontally centered */
-                  if ( arf > (4.0/3.0) )
-                  {
-                     hfactor= 1.0;
-                     vfactor= 1.0;
-                     arf= ard;
-                  }
-                  break;
-               case GST_VIDEO_AFD_16_9_LETTER_16_9_FULL: /* AFD 10 (1010) */
-               case GST_VIDEO_AFD_16_9_LETTER_14_9_CENTER: /* AFD 14 (1110) */
-               case GST_VIDEO_AFD_16_9_LETTER_4_3_CENTER: /* AFD 15 (1111) */
-                  /* 4:3 content has 16:9 letterbox roi vertically centered */
-                  /* 16:9 content is full frame 16:9 */
-                  if ( arf < (16.0/9.0) )
-                  {
-                     hfactor= 1.0;
-                     vfactor= 4.0/3.0;
-                     arf= ard;
-                  }
-                  break;
-               default:
-                  break;
-            }
-            #endif
-
-            if ( (arf >= ard) || wstApproxEqual(arf, ard) )
-            {
-               if ( wstApproxEqual(arf, ard) && wstApproxEqual( arf, 1.777) )
-               {
-                  /* For 16:9 content on a 16:9 display, enlarge as though 4:3 */
-                  vfactor= 4.0/3.0;
-                  hfactor= 1.0;
-                  if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("zoom apply vfactor %f hfactor %f", vfactor, hfactor);
-               }
-               vh= sink->soc.videoHeight * vfactor * (1.0+(2.0*sink->soc.overscanSize/100.0));
-               vw= (roiw * vh) * hfactor / roih;
-               vx= vx+(sink->soc.videoWidth-vw)/2;
-               vy= vy+(sink->soc.videoHeight-vh)/2;
-            }
-            else
-            {
-               vw= sink->soc.videoWidth * (1.0+(2.0*sink->soc.overscanSize/100.0));
-               vh= (roih * vw) / roiw;
-               vx= vx+(sink->soc.videoWidth-vw)/2;
-               vy= vy+(sink->soc.videoHeight-vh)/2;
-            }
-         }
-         break;
-   }
-   if ( sink->soc.pixelAspectRatioChanged ) GST_DEBUG("vrect %d, %d, %d, %d", vx, vy, vw, vh);
-   if ( sink->soc.pixelAspectRatioChanged )
-   {
-      if ( sink->display && sink->vpcSurface )
-      {
-         if ( sink->soc.captureEnabled || sink->soc.framesBeforeHideGfx )
-         {
-            wl_vpc_surface_set_geometry( sink->vpcSurface, vx, vy, vw, vh );
+            /* 16:9 */
+            stretchFactor = 16.0 / 14.0;
          }
          else
          {
-            wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
+            srcCropFactor *= 14.0 / 12.0;
+            stretchFactor = 12.0 / 14.0;
          }
-         wl_display_flush(sink->display);
-      }
-   }
-   sink->soc.pixelAspectRatioChanged= FALSE;
-   *x= vx;
-   *y= vy;
-   *w= vw;
-   *h= vh;
+         aro = 14.0 / 9.0;
+         break;
+      case GST_VIDEO_AFD_4_3_FULL_14_9_CENTER: /* AFD 13 (1101) */
+         /* 4:3 content is full frame with shoot and protect 14:9 center */
+         /* 16:9 contains 4:3 pillarbox with shoot and protect 14:9 center */
+         if (arf > (4.0 / 3.0))
+         {  /* 16:9 */ 
+            /* Zoom in on 14:9 center */
+            srcCropFactor *= 14.0 / 12.0;
+            stretchFactor = 16.0 / 14.0;
+            aro = 14.0 / 9.0;
+         }
+         else
+         {  /* 4:3 */
+            /* Zoom in on 14:9 center */
+            srcCropFactor *= 14.0 / 12.0;
+            stretchFactor = 12.0 / 14.0;
+            aro = 14.0 / 9.0;
+         }
+         break;
+      case GST_VIDEO_AFD_16_9_LETTER_16_9_FULL:   /* AFD 10 (1010) */
+      case GST_VIDEO_AFD_16_9_LETTER_14_9_CENTER: /* AFD 14 (1110) */
+      case GST_VIDEO_AFD_16_9_LETTER_4_3_CENTER:  /* AFD 15 (1111) */
+         /* 4:3 content has 16:9 letterbox roi vertically centered */
+         /* 16:9 content is full frame 16:9 */
+         if (arf > (4.0 / 3.0)) 
+         { 
+            /* 16:9 */
+         }
+         else
+         {
+            srcCropFactor *= 16.0 / 12.0;
+            stretchFactor = 12.0 / 16.0;
+            aro = 16.0 / 9.0;
+         }
+         break;
+      case GST_VIDEO_AFD_GREATER_THAN_16_9: /* AFD 4 (0100) */
+         /* 4:3 contains letterbox image with aspect ratio > 16:9 vertically centered */
+         /* 16:9 contains letterbox image with aspect ratio > 16:9 */
+         /* should be accompanied by bar data */
+         if (sink->soc.afdActive.haveBar) 
+         {
+            int activeHeight = sink->soc.afdActive.d1;
+            if (activeHeight > 0)
+            {
+               /* ignore bar data for now
+                  hfactor= 1.0;
+                  vfactor= roiw/activeHeight;
+                  arf= ard;
+               */
+            }
+         }
+         if (sink->soc.pixelAspectRatioChanged) GST_INFO("afd %d haveBar %d isLetterbox %d d1 %d d2 %d", sink->soc.afdActive.afd, sink->soc.afdActive.haveBar,
+                                                          sink->soc.afdActive.isLetterbox, sink->soc.afdActive.d1, sink->soc.afdActive.d2);
+         break;
+    }
+    if (!sink->soc.allow4kZoom &&
+        ((sink->soc.frameWidthStream > 1920) || (sink->soc.frameHeightStream > 1080)))
+    {
+       zoomMode = ZOOM_NORMAL;
+       if (sink->soc.pixelAspectRatioChanged || !actualVideoPlacement) GST_INFO("4k (%dx%d) force zoom mormal", sink->soc.frameWidthStream, sink->soc.frameHeightStream);
+    }
+    if (sink->soc.pixelAspectRatioChanged || !actualVideoPlacement) GST_INFO("zoomMode %d, afd %d(%d), ard %f, arf %f, stretchFactor %f, srcCropFactor %f overscanFactor %f", zoomMode, afd, sink->soc.afdActive.afd, ard, arf, stretchFactor, srcCropFactor, overscanFactor);
+    switch (zoomMode)
+    {
+       case ZOOM_NORMAL:
+       {
+          if (arf >= ard) {
+             vw = sink->soc.videoWidth * srcCropFactor * overscanFactor;
+             vh = vw / arf;
+          }
+          else
+          {
+             vh = sink->soc.videoHeight * srcCropFactor * overscanFactor;
+             vw = vh * arf;
+          }
+          if (sink->soc.overscanSize == 0) {
+             aro = arf;
+          }
+       } break;
+       case ZOOM_NONE:
+       case ZOOM_DIRECT:
+       {
+          if (arf >= ard)
+          {
+             vh = sink->soc.videoWidth / arf;
+          }
+          else
+          {
+             vw = sink->soc.videoHeight * arf;
+          }
+          overscanFactor = 1.0;
+          aro = arf;
+        } break;
+       case ZOOM_16_9_STRETCH:
+       {
+          vh = sink->soc.videoHeight * srcCropFactor * overscanFactor;
+          vw = vh * stretchFactor * 16.0 / 9.0;
+          aro = 16.0 / 9.0;
+       } break;
+       case ZOOM_4_3_PILLARBOX:
+       {
+          vh = sink->soc.videoHeight * srcCropFactor * overscanFactor;
+          vw = vh * stretchFactor * 4.0 / 3.0;
+          aro = 4.0 / 3.0;
+       } break;
+       case ZOOM_ZOOM:
+       {
+          if ((arf >= ard))
+          {
+             vh = sink->soc.videoHeight * stretchFactor * srcCropFactor * overscanFactor;
+             vw = vh * arf;
+          }
+          else
+          {
+             vw = sink->soc.videoWidth * stretchFactor * srcCropFactor * overscanFactor;
+             vh = vw / arf;
+          }
+          aro = ard;
+       } break;
+    }
+    /* Center video */
+    vx = vx + (sink->soc.videoWidth - vw) / 2;
+    vy = vy + (sink->soc.videoHeight - vh) / 2;
+
+    if (sink->soc.pixelAspectRatioChanged || !actualVideoPlacement)
+    {
+       if (aro >= ard)
+       {
+          oh = ow / aro;
+       }
+       else
+       {
+          ow = oh * aro;
+       }
+       if (ow > sink->windowWidth)
+       {
+          ow = sink->windowWidth;
+       }
+       if (oh > sink->windowHeight)
+       {
+          oh = sink->windowHeight;
+       }
+       ox = ox + (sink->windowWidth - ow) / 2;
+       oy = oy + (sink->windowHeight - oh) / 2;
+
+       GST_INFO("aro %f vrect(%d, %d, %d x %d) orect(%d, %d, %d x %d) video(%d, %d, %d x %d) window(%d, %d, %d x %d) display(%d x %d)", aro, vx, vy, vw, vh, ox, oy, ow, oh, sink->soc.videoX, sink->soc.videoY, sink->soc.videoWidth, sink->soc.videoHeight, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight, sink->displayWidth, sink->displayHeight);
+       if (sink->soc.pixelAspectRatioChanged && sink->display && sink->vpcSurface)
+       {
+          if (sink->soc.captureEnabled || sink->soc.framesBeforeHideGfx)
+          {
+             GST_INFO("Set geometry vrect(%d, %d, %d x %d)", vx, vy, vw, vh);
+             wl_vpc_surface_set_geometry(sink->vpcSurface, vx, vy, vw, vh);
+          }
+          else
+          {
+             GST_INFO("Set geometry orect(%d, %d, %d x %d)", ox, oy, ow, oh);
+             wl_vpc_surface_set_geometry(sink->vpcSurface, ox, oy, ow, oh);
+          }
+          wl_display_flush(sink->display);
+       }
+    }
+    sink->soc.pixelAspectRatioChanged = FALSE;
+    if (actualVideoPlacement) 
+    {
+        *x = vx;
+        *y = vy;
+        *w = vw;
+        *h = vh;
+    } else {
+        *x = ox;
+        *y = oy;
+        *w = ow;
+        *h = oh;
+    }
 }
 
 static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, int vh )
@@ -6268,17 +6286,19 @@ static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, in
       cropy= (cropy*WL_VPC_SURFACE_CROP_DENOM)/sink->windowHeight;
       cropw= (cropw*WL_VPC_SURFACE_CROP_DENOM)/sink->windowWidth;
       croph= (croph*WL_VPC_SURFACE_CROP_DENOM)/sink->windowHeight;
-      GST_DEBUG("wstSetTextureCrop: %d, %d, %d, %d - %d, %d, %d, %d", vx, vy, vw, vh, cropx, cropy, cropw, croph);
+      GST_INFO("wstSetTextureCrop set geometry with crop: %d, %d, %d, %d - %d, %d, %d, %d", vx, vy, vw, vh, cropx, cropy, cropw, croph);
       wl_vpc_surface_set_geometry_with_crop( sink->vpcSurface, vx, vy, vw, vh, cropx, cropy, cropw, croph );
    }
    else
    {
       if ( sink->soc.captureEnabled || sink->soc.framesBeforeHideGfx )
       {
+         GST_INFO("wstSetTextureCrop set geometry v: %d, %d, %d, %d", vx, vy, vw, vh);
          wl_vpc_surface_set_geometry( sink->vpcSurface, vx, vy, vw, vh );
       }
       else
       {
+         GST_INFO("wstSetTextureCrop set geometry w: %d, %d, %d, %d", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
          wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
       }
    }
@@ -7667,7 +7687,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
          sink->soc.videoHeight= sink->windowHeight;
          sink->soc.frameWidth= frame->width;
          sink->soc.frameHeight= frame->height;
-         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh );
+         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
          wstSetTextureCrop( sink, vx, vy, vw, vh );
       }
 
