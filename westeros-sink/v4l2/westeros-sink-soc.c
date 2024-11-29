@@ -31,6 +31,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/prctl.h>
 
 #ifdef USE_GST_VIDEO
 #include <gst/video/video-color.h>
@@ -282,20 +283,29 @@ static void avProgInit()
 
 static void avProgLog( long long nanoTime, int syncGroup, const char *edge, const char *desc )
 {
-   if ( gAvProgOut )
-   {
-      struct timespec tp;
-      long long pts= -1LL;
+    struct timespec tp;
+    long long pts= -1LL;
 
-      if ( syncGroup < 0 ) syncGroup= 0;
-      if ( GST_CLOCK_TIME_IS_VALID(nanoTime) )
-      {
-         pts= ((nanoTime / GST_SECOND) * 90000)+(((nanoTime % GST_SECOND) * 90000) / GST_SECOND);
-      }
+    if ( syncGroup < 0 ) syncGroup= 0;
+    if ( GST_CLOCK_TIME_IS_VALID(nanoTime) )
+    {
+        pts= ((nanoTime / GST_SECOND) * 90000)+(((nanoTime % GST_SECOND) * 90000) / GST_SECOND);
+    }
 
-      clock_gettime(CLOCK_MONOTONIC, &tp);
-      fprintf(gAvProgOut, "AVPROG: [%6u.%06u] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
-   }
+    clock_gettime(CLOCK_MONOTONIC, &tp);
+#if ENABLE_FTRACE_DEBUG
+    {
+        char msg[FTRACE_BUF_SIZE];
+
+        snprintf(msg, FTRACE_BUF_SIZE, "AVPROG: [%6u.%06u] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
+        prctl(PR_SET_FTRACE_MARKER, msg, 0, 0, 0);
+    }
+#else
+    if ( gAvProgOut )
+    {
+        fprintf(gAvProgOut, "AVPROG: [%6u.%06u] %lld %d %c %s %s\n", tp.tv_sec, tp.tv_nsec/1000, pts, syncGroup, 'V', edge, desc);
+    } 
+#endif
 }
 
 static void avProgTerm()
@@ -313,7 +323,11 @@ static void avProgTerm()
 static char *wstInFullness( GstWesterosSink *sink )
 {
    static char desc[64];
+#if ENABLE_FTRACE_DEBUG
+   if (1)
+#else
    if ( gAvProgOut )
+#endif
    {
       sprintf(desc,"(%d of %d)", sink->soc.inQueuedCount, sink->soc.numBuffersIn );
       return desc;
@@ -324,7 +338,11 @@ static char *wstInFullness( GstWesterosSink *sink )
 static char *wstOutFullness( GstWesterosSink *sink )
 {
    static char desc[64];
+#if ENABLE_FTRACE_DEBUG
+   if (1)
+#else
    if ( gAvProgOut )
+#endif
    {
       sprintf(desc,"(%d of %d)", sink->soc.outQueuedCount, sink->soc.numBuffersOut );
       return desc;
@@ -2047,7 +2065,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
       }
       #endif
 
-      avProgLog( GST_BUFFER_PTS(buffer), sink->resAssignedId, "GtoS", "");
+      avProgLog( GST_BUFFER_PTS(buffer), sink->resAssignedId, "GtoS", wstInFullness(sink));
 
       if ( GST_BUFFER_PTS_IS_VALID(buffer) )
       {
@@ -2379,7 +2397,7 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
       if ( sink->soc.dispatchThread == NULL )
       {
          GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_dispatch thread");
-         sink->soc.dispatchThread= g_thread_new("westerossinkDSP", wstDispatchThread, sink);
+         sink->soc.dispatchThread= g_thread_new("wstSinkVidDSP", wstDispatchThread, sink);
       }
    }
 
@@ -2387,14 +2405,14 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    if ( sink->soc.videoOutputThread == NULL )
    {
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_video_output thread");
-      sink->soc.videoOutputThread= g_thread_new("westerossinkVO", wstVideoOutputThread, sink);
+      sink->soc.videoOutputThread= g_thread_new("wstSinkVidOut", wstVideoOutputThread, sink);
    }
 
    sink->soc.quitEOSDetectionThread= FALSE;
    if ( sink->soc.eosDetectionThread == NULL )
    {
       GST_DEBUG_OBJECT(sink, "gst_westeros_sink_soc_start_video: starting westeros_sink_eos thread");
-      sink->soc.eosDetectionThread= g_thread_new("westerossinkEOS", wstEOSDetectionThread, sink);
+      sink->soc.eosDetectionThread= g_thread_new("wstSinkVidEOS", wstEOSDetectionThread, sink);
    }
 
    sink->videoStarted= TRUE;
@@ -5653,7 +5671,7 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
          wstLockOutputBuffer( sink, buffIndex );
          FRAME("out:       send frame %d buffer %d (%d)", conn->sink->soc.frameOutCount-1, conn->sink->soc.outBuffers[buffIndex].bufferId, buffIndex);
 
-         avProgLog( sink->soc.outBuffers[buffIndex].frameTime*1000L, sink->resAssignedId, "WtoW", "");
+         avProgLog( sink->soc.outBuffers[buffIndex].frameTime*1000L, sink->resAssignedId, "WtoW", wstOutFullness(sink));
 
          do
          {
@@ -7612,7 +7630,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
       {
          sink->soc.quitDispatchThread= FALSE;
          GST_DEBUG_OBJECT(sink, "swDisplay: starting westeros_sink_dispatch thread");
-         sink->soc.dispatchThread= g_thread_new("westerossinkDSP", wstDispatchThread, sink);
+         sink->soc.dispatchThread= g_thread_new("wstSinkVidDSP", wstDispatchThread, sink);
       }
    }
    if ( sink->soc.eosDetectionThread == NULL )
@@ -7621,7 +7639,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
       sink->eosEventSeen= TRUE;
       sink->soc.quitEOSDetectionThread= FALSE;
       GST_DEBUG_OBJECT(sink, "swDisplay: starting westeros_sink_eos thread");
-      sink->soc.eosDetectionThread= g_thread_new("westerossinkEOS", wstEOSDetectionThread, sink);
+      sink->soc.eosDetectionThread= g_thread_new("wstSinkVidEOS", wstEOSDetectionThread, sink);
    }
 
    bi= sink->soc.nextSWBuffer;
@@ -7675,7 +7693,7 @@ void swDisplay( GstWesterosSink *sink, SWFrame *frame )
 
       if ( frame->frameNumber == 0 )
       {
-         sink->soc.firstFrameThread= g_thread_new("westerossinkFFr", swFirstFrameThread, sink);
+         sink->soc.firstFrameThread= g_thread_new("wstSinkVidFFr", swFirstFrameThread, sink);
       }
 
       if ( needBounds(sink) && sink->vpcSurface )
