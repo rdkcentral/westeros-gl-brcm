@@ -2482,26 +2482,10 @@ void gst_westeros_sink_soc_set_video_path( GstWesterosSink *sink, bool useGfxPat
    {
       /* Use nominal display size provided to us by
        * the compositor to calculate the video bounds
-       * we should use when we transition to graphics path.
-       * Save and restore current HW video rectangle. */
+       * we should use when we transition to graphics path. */
       int vx, vy, vw, vh;
-      int tx, ty, tw, th;
-      tx= sink->soc.videoX;
-      ty= sink->soc.videoY;
-      tw= sink->soc.videoWidth;
-      th= sink->soc.videoHeight;
-      sink->soc.videoX= sink->windowX;
-      sink->soc.videoY= sink->windowY;
-      sink->soc.videoWidth= sink->windowWidth;
-      sink->soc.videoHeight= sink->windowHeight;
-
       wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
       wstSetTextureCrop( sink, vx, vy, vw, vh );
-
-      sink->soc.videoX= tx;
-      sink->soc.videoY= ty;
-      sink->soc.videoWidth= tw;
-      sink->soc.videoHeight= th;
    }
 }
 
@@ -2575,6 +2559,8 @@ void gst_westeros_sink_soc_update_video_position( GstWesterosSink *sink )
          }
       }
    }
+   /* westeros-sink defaults geometry to "full window rectangle" - ensure geometry gets updated based on zoom mode, pixel aspect ratio, AFD etc. (even if !needUpdate) */
+   sink->soc.pixelAspectRatioChanged= TRUE;
    if ( needUpdate )
    {
       wstSendRectVideoClientConnection(sink->soc.conn);
@@ -3122,26 +3108,10 @@ static void wstProcessEvents( GstWesterosSink *sink )
                {
                   /* Use nominal display size provided to us by
                    * the compositor to calculate the video bounds
-                   * we should use when we transition to graphics path.
-                   * Save and restore current HW video rectangle. */
+                   * we should use when we transition to graphics path.*/
                   int vx, vy, vw, vh;
-                  int tx, ty, tw, th;
-                  tx= sink->soc.videoX;
-                  ty= sink->soc.videoY;
-                  tw= sink->soc.videoWidth;
-                  th= sink->soc.videoHeight;
-                  sink->soc.videoX= sink->windowX;
-                  sink->soc.videoY= sink->windowY;
-                  sink->soc.videoWidth= sink->windowWidth;
-                  sink->soc.videoHeight= sink->windowHeight;
-
                   wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
                   wstSetTextureCrop( sink, vx, vy, vw, vh );
-
-                  sink->soc.videoX= tx;
-                  sink->soc.videoY= ty;
-                  sink->soc.videoWidth= tw;
-                  sink->soc.videoHeight= th;
                }
                sink->soc.nextFrameFd= -1;
                sink->soc.prevFrame1Fd= -1;
@@ -4739,7 +4709,7 @@ static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn )
       vh= sink->soc.videoHeight;
       if ( needBounds(sink) )
       {
-         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, false );
+         wstGetVideoBounds( sink, &vx, &vy, &vw, &vh, true );
       }
 
       msg.msg_name= NULL;
@@ -5936,12 +5906,9 @@ static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int
    double contentWidth, contentHeight;
    double arf, ard, aro;
    double stretchFactor = 1.0;
-   double overscanFactor = 1.0;
+   double overscanFactor = (1.0 / (1.0 - (2.0 * sink->soc.overscanSize / 100.0)));
    double srcCropFactor = 1.0;
-   if (actualVideoPlacement) 
-   {
-      overscanFactor = (1.0 / (1.0 - (2.0 * sink->soc.overscanSize / 100.0)));
-   }
+
    vx = sink->soc.videoX;
    vy = sink->soc.videoY;
    vw = sink->soc.videoWidth;
@@ -6137,19 +6104,11 @@ static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int
        ox = ox + (sink->windowWidth - ow) / 2;
        oy = oy + (sink->windowHeight - oh) / 2;
 
-       GST_INFO("aro %f vrect(%d, %d, %d x %d) orect(%d, %d, %d x %d) video(%d, %d, %d x %d) window(%d, %d, %d x %d) display(%d x %d)", aro, vx, vy, vw, vh, ox, oy, ow, oh, sink->soc.videoX, sink->soc.videoY, sink->soc.videoWidth, sink->soc.videoHeight, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight, sink->displayWidth, sink->displayHeight);
+       GST_INFO("aro %f vrect(%d, %d, %d x %d) orect(%d, %d, %d x %d) video(%d, %d, %d x %d) window(%d, %d, %d x %d) display(%d x %d) frameOutCount(%d)", aro, vx, vy, vw, vh, ox, oy, ow, oh, sink->soc.videoX, sink->soc.videoY, sink->soc.videoWidth, sink->soc.videoHeight, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight, sink->displayWidth, sink->displayHeight, sink->soc.frameOutCount);
        if (sink->soc.pixelAspectRatioChanged && sink->display && sink->vpcSurface)
        {
-          if (sink->soc.captureEnabled || sink->soc.framesBeforeHideGfx)
-          {
-             GST_INFO("Set geometry vrect(%d, %d, %d x %d)", vx, vy, vw, vh);
-             wl_vpc_surface_set_geometry(sink->vpcSurface, vx, vy, vw, vh);
-          }
-          else
-          {
-             GST_INFO("Set geometry orect(%d, %d, %d x %d)", ox, oy, ow, oh);
-             wl_vpc_surface_set_geometry(sink->vpcSurface, ox, oy, ow, oh);
-          }
+          GST_INFO("Set geometry orect(%d, %d, %d x %d)", ox, oy, ow, oh);
+          wl_vpc_surface_set_geometry(sink->vpcSurface, ox, oy, ow, oh);
           wl_display_flush(sink->display);
        }
     }
@@ -6291,16 +6250,8 @@ static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, in
    }
    else
    {
-      if ( sink->soc.captureEnabled || sink->soc.framesBeforeHideGfx )
-      {
-         GST_INFO("wstSetTextureCrop set geometry v: %d, %d, %d, %d", vx, vy, vw, vh);
-         wl_vpc_surface_set_geometry( sink->vpcSurface, vx, vy, vw, vh );
-      }
-      else
-      {
-         GST_INFO("wstSetTextureCrop set geometry w: %d, %d, %d, %d", sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight);
-         wl_vpc_surface_set_geometry( sink->vpcSurface, sink->windowX, sink->windowY, sink->windowWidth, sink->windowHeight );
-      }
+      GST_INFO("wstSetTextureCrop set geometry: %d, %d, %d, %d", vx, vy, vw, vh);
+      wl_vpc_surface_set_geometry( sink->vpcSurface, vx, vy, vw, vh );
    }
 }
 
