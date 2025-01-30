@@ -37,6 +37,23 @@
 
 #define GST_PACKAGE_ORIGIN "http://gstreamer.net/"
 
+#ifdef USE_PIPELINE_LOGGING
+#include <unistd.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+// Function to log pipeline textual representation
+void dump_pipeline_info(GstBin *bin); // Defined in pipeline_logger.cpp
+#ifdef __cplusplus
+}
+#endif
+
+static int g_enable_pipeline_dump_in_text = 0;
+#define PIPELINE_DUMP_FLAG_FILENAME_TEMP "/tmp/enable_westeros_pipeline_dump"
+#define PIPELINE_DUMP_FLAG_FILENAME_PERSISTENT "/opt/enable_westeros_pipeline_dump"
+#endif //USE_PIPELINE_LOGGING
+
 static GstStaticPadTemplate gst_westeros_sink_pad_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
@@ -1325,6 +1342,17 @@ gst_westeros_sink_init(GstWesterosSink *sink, GstWesterosSinkClass *gclass)
    sink->mediaCaptureContext= 0;
    sink->mediaCaptureDestroyContext= 0;
 
+#ifdef USE_PIPELINE_LOGGING
+   if((0 == access(PIPELINE_DUMP_FLAG_FILENAME_TEMP, F_OK)) || (0 == access(PIPELINE_DUMP_FLAG_FILENAME_PERSISTENT, F_OK)))
+   {
+      g_enable_pipeline_dump_in_text = 1;
+   }
+   else
+   {
+      g_enable_pipeline_dump_in_text = 0;
+   }
+#endif //USE_PIPELINE_LOGGING
+
    if ( gst_westeros_sink_soc_init( sink ) == TRUE )
    {
       sink->registry= 0;
@@ -1732,6 +1760,35 @@ static GstStateChangeReturn gst_westeros_sink_change_state(GstElement *element, 
          {
             result= GST_STATE_CHANGE_FAILURE;
          }
+
+#ifdef USE_PIPELINE_LOGGING
+         if(1 == g_enable_pipeline_dump_in_text)
+         {
+            // Print the pipeline textual representation
+            GstElement *parent = NULL, *child = element;
+            gst_object_ref(child); // to ensure consistency in refcounts when entering the below loop.
+
+            while(!GST_IS_PIPELINE(child))
+            {
+               parent = GST_ELEMENT(gst_element_get_parent(child));
+               gst_object_unref(child);
+               if(!parent)
+               {
+                  child = NULL;
+                  break; //No more parents. Give up.
+               }
+               else
+               {
+                  child = parent;
+               }
+            }
+            if(child)
+            {
+               dump_pipeline_info(GST_BIN(child));
+               gst_object_unref(child);
+            }
+         }
+#endif //USE_PIPELINE_LOGGING
          break;
       }
 
