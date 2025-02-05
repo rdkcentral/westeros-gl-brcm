@@ -1826,7 +1826,9 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    startSettings.settings.pidChannel= sink->soc.videoPidChannel;
    startSettings.settings.progressiveOverrideMode= NEXUS_VideoDecoderProgressiveOverrideMode_eDisable;
    startSettings.settings.timestampMode= NEXUS_VideoDecoderTimestampMode_eDisplay;                
+#if (NEXUS_PLATFORM_VERSION_MAJOR < 24)
    startSettings.settings.prerollRate= 1;
+#endif
    startSettings.displayEnabled= true;
    startSettings.smoothResolutionChange= TRUE;
    startSettings.maxWidth= sink->maxWidth;
