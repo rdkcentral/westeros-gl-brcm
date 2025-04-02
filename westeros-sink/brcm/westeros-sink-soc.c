@@ -1691,18 +1691,21 @@ void gst_westeros_sink_soc_set_startPTS( GstWesterosSink *sink, gint64 pts )
       }
       else
       {
-         if ( pts == 0 )
+         if (pts45k != sink->soc.lastStartPts45k)
          {
-            GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
-            NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
-            sink->soc.lastStartPts45k= 0;
-         }
-         else
-         {
-            GST_DEBUG("NEXUS_SimpleVideoDecoder_SetStartPts %ums", pts45k/45);
-            NEXUS_SimpleVideoDecoder_SetStartPts( sink->soc.videoDecoder, pts45k );
-            sink->soc.lastStartPts45k= pts45k;
-            sink->soc.chkBufToStartPts= TRUE;
+            if ( pts45k == 0 )
+            {
+               GST_DEBUG("Flushing Decoder, will clear _SetStartPts");
+               NEXUS_SimpleVideoDecoder_Flush( sink->soc.videoDecoder );
+               sink->soc.lastStartPts45k= 0;
+            }
+            else
+            {
+               GST_DEBUG("NEXUS_SimpleVideoDecoder_SetStartPts %ums", pts45k/45);
+               NEXUS_SimpleVideoDecoder_SetStartPts( sink->soc.videoDecoder, pts45k );
+               sink->soc.lastStartPts45k= pts45k;
+               sink->soc.chkBufToStartPts= TRUE;
+            }
          }
       }
    }
@@ -3238,6 +3241,9 @@ gboolean gst_westeros_sink_soc_query( GstWesterosSink *sink, GstQuery *query )
 
                 g_value_set_uint(&val, fifoDepth);
                 gst_structure_set_value(query_structure, "fifoDepth", &val);
+
+                g_value_set_uint(&val, sink->soc.lastStartPts45k);
+                gst_structure_set_value(query_structure, "startPts", &val);
                 rv= TRUE;
             }
          }
