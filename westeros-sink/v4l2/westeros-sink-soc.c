@@ -180,7 +180,7 @@ static bool wstSendFrameVideoClientConnection( WstVideoClientConnection *conn, i
 static void wstSendFrameAdvanceVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendRectVideoClientConnection( WstVideoClientConnection *conn );
 static void wstSendKeepFrameVideoClientConnection( WstVideoClientConnection *conn );
-static void wstWaitForLastFrame( GstWesterosSink *sink );
+static bool wstWaitForLastFrame( GstWesterosSink *sink );
 static void wstDecoderReset( GstWesterosSink *sink, bool hard );
 static void wstGetVideoBounds(GstWesterosSink *sink, int *x, int *y, int *w, int *h, bool actualVideoPlacement);
 static void wstSetTextureCrop( GstWesterosSink *sink, int vx, int vy, int vw, int vh );
@@ -855,6 +855,8 @@ gboolean gst_westeros_sink_soc_init( GstWesterosSink *sink )
    sink->soc.mutex= g_mutex_new();
    #endif
 
+   pthread_mutex_init(&sink->soc.reset_lock, NULL);
+
    sink->soc.sb= 0;
    sink->soc.activeBuffers= 0;
    sink->soc.frameRate= 0.0;
@@ -1109,6 +1111,8 @@ void gst_westeros_sink_soc_term( GstWesterosSink *sink )
    #else
    g_mutex_free( sink->soc.mutex );
    #endif
+
+   pthread_mutex_destroy(&sink->soc.reset_lock);
 }
 
 void gst_westeros_sink_soc_set_property(GObject *object, guint prop_id, const GValue *value, GParamSpec *pspec)
@@ -1975,13 +1979,20 @@ gboolean gst_westeros_sink_soc_accept_caps( GstWesterosSink *sink, GstCaps *caps
             g_print("westeros-sink: input change : frame %dx%d format 0x%08X\n", sink->soc.frameWidth, sink->soc.frameHeight, sink->soc.inputFormat);
             if ( codecChange )
             {
-               wstWaitForLastFrame( sink );
+               if (!wstWaitForLastFrame( sink ))
+               {
+                  GST_DEBUG("wait last frame for codec change fail.");
+                  return result;
+               }
             }
+
+            pthread_mutex_lock(&sink->soc.reset_lock);
             wstDecoderReset( sink, true );
             if ( sink->soc.v4l2Fd >= 0 )
             {
                wstSetupInput( sink );
             }
+            pthread_mutex_unlock(&sink->soc.reset_lock);
          }
       }
    }
@@ -2310,7 +2321,7 @@ void gst_westeros_sink_soc_render( GstWesterosSink *sink, GstBuffer *buffer )
          if ( rc < 0 )
          {
             UNLOCK(sink);
-            GST_ERROR("streamon failed for input: rc %d errno %d", rc, errno );
+            GST_ERROR("streamon failed for input: fd %d rc %d errno %d", sink->soc.v4l2Fd, rc, errno );
             goto exit;
          }
 
@@ -2345,6 +2356,9 @@ exit:
 void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
 {
    GST_DEBUG("gst_westeros_sink_soc_flush");
+
+   pthread_mutex_lock(&sink->soc.reset_lock);
+
    if ( sink->videoStarted )
    {
       wstDecoderReset( sink, true );
@@ -2367,6 +2381,8 @@ void gst_westeros_sink_soc_flush( GstWesterosSink *sink )
    wstFlushAFDInfo( sink, false );
    #endif
    UNLOCK(sink);
+
+   pthread_mutex_unlock(&sink->soc.reset_lock);
 }
 
 gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
@@ -2384,10 +2400,11 @@ gboolean gst_westeros_sink_soc_start_video( GstWesterosSink *sink )
    sink->soc.decoderLastFrame= 0;
    sink->soc.decoderEOS= 0;
 
+   GST_DEBUG("start_video: issue input VIDIOC_STREAMON");
    rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_STREAMON, &sink->soc.fmtIn.type );
    if ( rc < 0 )
    {
-      GST_ERROR("streamon failed for input: rc %d errno %d", rc, errno );
+      GST_ERROR("streamon failed for input: fd %d, rc %d errno %d", sink->soc.v4l2Fd, rc, errno );
       goto exit;
    }
 
@@ -5679,15 +5696,16 @@ exit:
    return result;
 }
 
-static void wstWaitForLastFrame( GstWesterosSink *sink )
+static bool wstWaitForLastFrame( GstWesterosSink *sink )
 {
    int rc;
    double frameRate;
    int count;
    int decoderEOS, decoderEOSPrev, displayCount;
    bool videoPlaying, flushStarted;
+   bool result = TRUE;
 
-   if ( sink->soc.frameInCount > 2 )
+   if ( sink->soc.frameInCount > 2 && sink->soc.frameOutCount > 0)
    {
       if ( sink->soc.hasEOSEvents && !sink->soc.expectNoLastFrame )
       {
@@ -5739,12 +5757,19 @@ static void wstWaitForLastFrame( GstWesterosSink *sink )
             if ( flushStarted )
             {
                GST_DEBUG("detect flush");
+               result = FALSE;
                break;
             }
          }
       }
+
+      if (sink->soc.quitVideoOutputThread)
+        result = FALSE;
+
       GST_DEBUG("done wait for last frame");
    }
+
+   return result;
 }
 
 static void wstDecoderReset( GstWesterosSink *sink, bool hard )
@@ -5768,6 +5793,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
       sink->soc.videoOutputThread= NULL;
    }
 
+   LOCK(sink);
    if ( hard )
    {
       if ( sink->soc.v4l2Fd >= 0 )
@@ -5778,6 +5804,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
       }
 
       sink->soc.v4l2Fd= open( sink->soc.devname, O_RDWR | O_CLOEXEC );
+
       if ( sink->soc.v4l2Fd < 0 )
       {
          GST_ERROR("failed to open device (%s)", sink->soc.devname );
@@ -5786,9 +5813,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
       wstStartEvents( sink );
    }
 
-   LOCK(sink);
    sink->videoStarted= FALSE;
-   UNLOCK(sink);
    sink->startAfterCaps= TRUE;
    sink->soc.prevFrameTimeGfx= 0;
    sink->soc.prevFramePTSGfx= 0;
@@ -5797,6 +5822,7 @@ static void wstDecoderReset( GstWesterosSink *sink, bool hard )
    sink->soc.nextFrameFd= -1;
    sink->soc.formatsSet= FALSE;
    sink->soc.codecDataInjected= FALSE;
+   UNLOCK(sink);
 }
 
 typedef struct bufferInfo
@@ -6530,11 +6556,12 @@ capture_start:
          sink->soc.outBuffers[i].queued= true;
       }
 
+      GST_DEBUG("output thread: issue input VIDIOC_STREAMON");
       rc= IOCTL( sink->soc.v4l2Fd, VIDIOC_STREAMON, &sink->soc.fmtOut.type );
       if ( rc < 0 )
       {
-         GST_ERROR("wstVideoOutputThread: streamon failed for output: rc %d errno %d", rc, errno );
          UNLOCK(sink);
+         GST_ERROR("streamon failed for output: fd %d, rc %d errno %d", sink->soc.v4l2Fd, rc, errno );
          postDecodeError( sink, "STREAMON failure" );
          goto exit;
       }
@@ -7247,6 +7274,7 @@ static int sinkAcquireVideo( GstWesterosSink *sink )
    }
 
    sink->soc.v4l2Fd= open( sink->soc.devname, O_RDWR | O_CLOEXEC );
+
    if ( sink->soc.v4l2Fd < 0 )
    {
       GST_ERROR("failed to open device (%s)", sink->soc.devname );

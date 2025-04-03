@@ -333,6 +333,8 @@ struct _GstWesterosSinkSoc
    #else
    GMutex *mutex;
    #endif
+
+   pthread_mutex_t reset_lock;
 };
 
 void gst_westeros_sink_soc_class_init(GstWesterosSinkClass *klass);

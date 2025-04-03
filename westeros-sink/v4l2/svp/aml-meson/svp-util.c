@@ -231,6 +231,8 @@ static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
    GstStructure *structure;
    int blp, elp;
 
+   GST_DEBUG("this is wstSVPAcceptCaps, old db=%d, de=%d.", sink->soc.dvBaseLayerPresent, sink->soc.dvEnhancementLayerPresent);
+
    structure= gst_caps_get_structure(caps, 0);
    if( structure )
    {
@@ -255,6 +257,8 @@ static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
       {
          sink->soc.dvEnhancementLayerPresent= -1;
       }
+
+      GST_DEBUG("new db=%d, de=%d.", sink->soc.dvBaseLayerPresent, sink->soc.dvEnhancementLayerPresent);
 
       if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) || sink->soc.haveColorimetry)
       {
@@ -284,14 +288,29 @@ static void wstSVPAcceptCaps( GstWesterosSink *sink, GstCaps *caps )
                else
                {
                   int hdr_type = 1;
-                  if ( (blp != sink->soc.dvBaseLayerPresent) || (elp != sink->soc.dvEnhancementLayerPresent) )
-                      hdr_type = 3;
-                  else if ( sink->soc.hdrColorimetry[3] == GST_VIDEO_COLOR_PRIMARIES_BT2020) {
-                      if ( (sink->soc.hdrColorimetry[2] == GST_VIDEO_TRANSFER_BT2020_10) ||
-                                (sink->soc.hdrColorimetry[2] == GST_VIDEO_TRANSFER_ARIB_STD_B67))
-                          hdr_type = 5;
-                  } else
-                      hdr_type = 6;
+                  if ( (1 == sink->soc.dvBaseLayerPresent) || (1 == sink->soc.dvEnhancementLayerPresent) )
+                  {
+                     GST_DEBUG("demuxer know it is DV.");
+                     hdr_type = 3;
+                  }
+                  else
+                  {
+                    if (0 == sink->soc.dvBaseLayerPresent && 0 == sink->soc.dvEnhancementLayerPresent)
+                    {
+                       GST_DEBUG("demuxer set not play as DV.");
+                    }
+
+                    if ( sink->soc.hdrColorimetry[3] == GST_VIDEO_COLOR_PRIMARIES_BT2020)
+                    {
+                        if ( (sink->soc.hdrColorimetry[2] == GST_VIDEO_TRANSFER_BT2020_10) ||
+                           (sink->soc.hdrColorimetry[2] == GST_VIDEO_TRANSFER_ARIB_STD_B67) )
+                           hdr_type = 5;
+                     } 
+                     else
+                        hdr_type = 6;
+                  }
+
+                  GST_DEBUG("[20250227]write fifo: w=%d, h=%d, hdr_type=%d.", width, height, hdr_type);
                   snprintf (write_msg, FRAME_INFO_FIFO_SIZE, "%d, %d, %d", width, height, hdr_type);
                   ssize_t num_bytes = write(fifo_fd, write_msg, FRAME_INFO_FIFO_SIZE);
                   if (num_bytes == -1) {
