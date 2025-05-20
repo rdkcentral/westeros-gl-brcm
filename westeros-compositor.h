@@ -698,7 +698,7 @@ bool WstCompositorGetSurfaceIds( WstCompositor *wctx, std::vector<int> &surfaceI
  *
  * resets the first frame event
  */
-bool WstCompositorResetFirstFrame( WstCompositor *wctx);
+bool WstCompositorResetFirstFrame( WstCompositor *wctx );
 
 #endif
 

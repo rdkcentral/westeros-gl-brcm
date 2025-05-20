@@ -10390,7 +10390,7 @@ bool WstCompositorGetSurfaceIds( WstCompositor *wctx, std::vector<int> &surfaceI
    return false;
 }
 
-bool WstCompositorResetFirstFrame( WstCompositor *wctx)
+bool WstCompositorResetFirstFrame( WstCompositor *wctx )
 {
    wctx->clientFirstFrame = false;
    return true;
