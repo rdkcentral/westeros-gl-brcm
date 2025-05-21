@@ -3081,8 +3081,38 @@ static void essPlatformTermWayland( EssCtx *ctx )
 
          if ( ctx->wlseat )
          {
-            wl_seat_destroy(ctx->wlseat);
+            if ( wl_seat_get_version(ctx->wlseat) >= WL_SEAT_RELEASE_SINCE_VERSION )
+               wl_seat_release(ctx->wlseat);
+            else
+               wl_seat_destroy(ctx->wlseat);
             ctx->wlseat= 0;
+         }
+
+         if ( ctx->wlkeyboard )
+         {
+            if ( wl_keyboard_get_version(ctx->wlkeyboard) >= WL_KEYBOARD_RELEASE_SINCE_VERSION )
+               wl_keyboard_release(ctx->wlkeyboard);
+            else
+               wl_keyboard_destroy(ctx->wlkeyboard);
+            ctx->wlkeyboard= 0;
+         }
+
+         if ( ctx->wlpointer )
+         {
+            if ( wl_pointer_get_version(ctx->wlpointer) >= WL_POINTER_RELEASE_SINCE_VERSION )
+               wl_pointer_release(ctx->wlpointer);
+            else
+               wl_pointer_destroy(ctx->wlpointer);
+            ctx->wlpointer= 0;
+         }
+
+         if ( ctx->wltouch )
+         {
+            if ( wl_touch_get_version(ctx->wltouch) >= WL_TOUCH_RELEASE_SINCE_VERSION )
+               wl_touch_release(ctx->wltouch);
+            else
+               wl_touch_destroy(ctx->wltouch);
+            ctx->wltouch= 0;
          }
 
          if ( ctx->wloutput )
@@ -3090,6 +3120,14 @@ static void essPlatformTermWayland( EssCtx *ctx )
             wl_output_destroy(ctx->wloutput);
             ctx->wloutput= 0;
          }
+
+         #ifdef HAVE_WESTEROS
+         if ( ctx->shell )
+         {
+            wl_simple_shell_destroy(ctx->shell);
+            ctx->shell= 0;
+         }
+         #endif
 
          if ( ctx->wlregistry )
          {
@@ -3099,6 +3137,24 @@ static void essPlatformTermWayland( EssCtx *ctx )
 
          wl_display_disconnect( ctx->wldisplay );
          ctx->wldisplay= 0;
+      }
+
+      if ( ctx->xkbCtx )
+      {
+         if ( ctx->xkbKeymap )
+         {
+            xkb_keymap_unref( ctx->xkbKeymap );
+            ctx->xkbKeymap= 0;
+         }
+
+         if ( ctx->xkbState )
+         {
+            xkb_state_unref( ctx->xkbState );
+            ctx->xkbState= 0;
+         }
+
+         xkb_context_unref( ctx->xkbCtx );
+         ctx->xkbCtx= 0;
       }
    }
 }
