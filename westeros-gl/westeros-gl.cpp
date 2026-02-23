@@ -34,6 +34,7 @@
 #endif
 #include "default_nexus.h"
 #include "nxclient.h"
+#include "westeros-gl-brcm-version.h"
 
 #include <vector>
 
@@ -189,6 +190,8 @@ WstGLCtx* WstGLInit()
    NEXUS_Error rc= NEXUS_SUCCESS;
    NxClient_JoinSettings joinSettings;
    NEXUS_Graphics2DOpenSettings gfxOpenSettings;
+
+   printf("Westeros-gl-brcm version: " WST_GL_BRCM_VERSION_FMT, WST_GL_BRCM_VERSION );
 
    ctx= (WstGLCtx*)calloc( 1, sizeof(WstGLCtx) );
    if ( ctx )
