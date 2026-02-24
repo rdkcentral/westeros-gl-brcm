@@ -191,7 +191,7 @@ WstGLCtx* WstGLInit()
    NxClient_JoinSettings joinSettings;
    NEXUS_Graphics2DOpenSettings gfxOpenSettings;
 
-   printf("Westeros-gl-brcm version: " WST_GL_BRCM_VERSION_FMT, WST_GL_BRCM_VERSION );
+   printf("Westeros GL version: " WST_GL_BRCM_VERSION_FMT, WST_GL_BRCM_VERSION );
 
    ctx= (WstGLCtx*)calloc( 1, sizeof(WstGLCtx) );
    if ( ctx )
