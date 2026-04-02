@@ -25,6 +25,9 @@
 #include "wayland-client.h"
 #include "wayland-egl.h"
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+
 #ifdef ENABLE_SBPROTOCOL
 #include "westeros-simplebuffer.h"
 #endif
@@ -154,7 +157,7 @@ static void wstRendererPushSurface( WstRendererNX *renderer, WstRenderSurface *s
 
       surface->surfacePush= 0;
 
-      size_t n= 0;
+      unsigned n= 0;
       do
       {
          NEXUS_SurfaceHandle surface_list[10];
@@ -550,7 +553,7 @@ static void wstRendererNXCommitShm( WstRendererNX *renderer, WstRenderSurface *s
 static void wstRendererNXCommitSB( WstRendererNX *renderer, WstRenderSurface *surface, struct wl_resource *resource )
 {
    NEXUS_Error rc;
-   struct wl_sb_buffer *sbBuffer;
+   WstSBBuffer *sbBuffer;
    int bufferWidth, bufferHeight;
    void *deviceBuffer;
    
@@ -701,18 +704,21 @@ static void wstRendererSurfaceDestroy( WstRenderer *renderer, WstRenderSurface *
 {
    WstRendererNX *rendererNX= (WstRendererNX*)renderer->renderer;
 
-   for ( std::vector<WstRenderSurface*>::iterator it= rendererNX->surfaces.begin(); 
-         it != rendererNX->surfaces.end();
-         ++it )
+   if ( surface )
    {
-      if ( (*it) == surface )
+      for ( std::vector<WstRenderSurface*>::iterator it= rendererNX->surfaces.begin(); 
+            it != rendererNX->surfaces.end();
+            ++it )
       {
-         rendererNX->surfaces.erase(it);
-         break;   
-      }
-   }   
-   
-   wstRendererNXDestroySurface( rendererNX, surface );
+         if ( (*it) == surface )
+         {
+            rendererNX->surfaces.erase(it);
+            break;   
+         }
+      }   
+      
+      wstRendererNXDestroySurface( rendererNX, surface );
+   }
 }
 
 static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *surface, struct wl_resource *resource )
@@ -720,33 +726,36 @@ static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *s
    WstRendererNX *rendererNX= (WstRendererNX*)renderer->renderer;
    EGLint value;
 
-   if ( resource )
+   if ( surface )
    {
-      if ( wl_shm_buffer_get( resource ) )
+      if ( resource )
       {
-         wstRendererNXCommitShm( rendererNX, surface, resource );
+         if ( wl_shm_buffer_get( resource ) )
+         {
+            wstRendererNXCommitShm( rendererNX, surface, resource );
+         }
+         #ifdef ENABLE_SBPROTOCOL
+         else if ( WstSBBufferGet( resource ) )
+         {
+            wstRendererNXCommitSB( rendererNX, surface, resource );
+         }
+         #endif
+         #if defined (WESTEROS_HAVE_WAYLAND_EGL)
+         else if ( wl_egl_get_device_buffer( resource ) )
+         {
+            wstRendererNXCommitBNXS( rendererNX, surface, resource );
+         }
+         #endif
+         else
+         {
+            printf("wstRendererSurfaceCommit: unsupported buffer type\n");
+         }
       }
-      #ifdef ENABLE_SBPROTOCOL
-      else if ( WstSBBufferGet( resource ) )
-      {
-         wstRendererNXCommitSB( rendererNX, surface, resource );
-      }
-      #endif
-      #if defined (WESTEROS_HAVE_WAYLAND_EGL)
-      else if ( wl_egl_get_device_buffer( resource ) )
-      {
-         wstRendererNXCommitBNXS( rendererNX, surface, resource );
-      }
-      #endif
       else
       {
-         printf("wstRendererSurfaceCommit: unsupported buffer type\n");
+         surface->surfacePending= 0;
+         NEXUS_SurfaceClient_Clear(surface->gfxSurfaceClient);
       }
-   }
-   else
-   {
-      surface->surfacePending= 0;
-      NEXUS_SurfaceClient_Clear(surface->gfxSurfaceClient);
    }
 }
 
@@ -775,21 +784,23 @@ static bool wstRendererSurfaceGetVisible( WstRenderer *renderer, WstRenderSurfac
    NEXUS_SurfaceComposition composition;
    WstRendererNX *rendererNX= (WstRendererNX*)renderer->renderer;
    
-   if ( surface )
+   if ( !visible || !surface )
    {
-      NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
-      
-      isVisible= surface->visible;
-
-      if(isVisible != composition.visible)
-      {
-         printf("westeros_render_nexus: %s query received before scene update, returning surface->visible=%d, composition.visible=%d\n", __FUNCTION__, surface->visible, composition.visible);
-      }
-      
-      *visible= isVisible;
+      return false;  // Return false on error (null parameters)
    }
    
-   return isVisible;
+   NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
+   
+   isVisible= surface->visible;
+
+   if(isVisible != composition.visible)
+   {
+      printf("westeros_render_nexus: %s query received before scene update, returning surface->visible=%d, composition.visible=%d\n", __FUNCTION__, surface->visible, composition.visible);
+   }
+   
+   *visible= isVisible;
+   
+   return true;  // Return true to indicate success
 }
 
 static void wstRendererSurfaceSetGeometry( WstRenderer *renderer, WstRenderSurface *surface, int x, int y, int width, int height )
@@ -838,10 +849,10 @@ void wstRendererSurfaceGetGeometry( WstRenderer *renderer, WstRenderSurface *sur
    {
       NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
       
-      *x= surface->x;
-      *y= surface->y;
-      *width= surface->width;
-      *height= surface->height;
+      if ( x ) *x= surface->x;
+      if ( y ) *y= surface->y;
+      if ( width ) *width= surface->width;
+      if ( height ) *height= surface->height;
    }
 }
 
@@ -871,23 +882,20 @@ static void wstRendererSurfaceSetOpacity( WstRenderer *renderer, WstRenderSurfac
    }
 }
 
-static float wstRendererSurfaceGetOpacity( WstRenderer *renderer, WstRenderSurface *surface, float *opacity )
+static void wstRendererSurfaceGetOpacity( WstRenderer *renderer, WstRenderSurface *surface, float *opacity )
 {
-   NEXUS_Error rc;
-   NEXUS_SurfaceComposition composition;
    WstRendererNX *rendererNX= (WstRendererNX*)renderer->renderer;
-   float opacityLevel= 1.0;
    
-   if ( surface )
+   if ( !surface )
    {
-      NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
-
-      opacityLevel= ((float)composition.colorMatrix.coeffMatrix[18])/255.0;
-      
-      *opacity= opacityLevel;
+      return;  // Early return for null surface
    }
    
-   return opacityLevel;
+   // Read directly from surface struct to preserve exact value set
+   if ( opacity )
+   {
+      *opacity= surface->opacity;
+   }
 }
 
 static void wstRendererSurfaceSetZOrder( WstRenderer *renderer, WstRenderSurface *surface, float z )
@@ -932,23 +940,20 @@ static void wstRendererSurfaceSetZOrder( WstRenderer *renderer, WstRenderSurface
    }
 }
 
-static float wstRendererSurfaceGetZOrder( WstRenderer *renderer, WstRenderSurface *surface, float *z )
+static void wstRendererSurfaceGetZOrder( WstRenderer *renderer, WstRenderSurface *surface, float *z )
 {
-   NEXUS_Error rc;
-   NEXUS_SurfaceComposition composition;
    WstRendererNX *rendererNX= (WstRendererNX*)renderer->renderer;
-   float zLevel= MAX_ZORDER;
    
-   if ( surface )
+   if ( !surface )
    {
-      NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
-
-      zLevel= ((float)composition.zorder)/(float)MAX_ZORDER;
-      
-      *z= zLevel;
+      return;  // Early return for null surface
    }
    
-   return zLevel;
+   // Read directly from surface struct to preserve exact value set
+   if ( z )
+   {
+      *z= surface->zorder;
+   }
 }
 
 static void wstRendererDelegateUpdateScene( WstRenderer *renderer, std::vector<WstRect> &rects )

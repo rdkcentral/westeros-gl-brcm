@@ -1,0 +1,124 @@
+name: L1 Tests and Coverage
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+        coverage: [ON, OFF]
+        exclude:
+          - build_type: Release
+            coverage: ON
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential pkg-config \
+          libgtest-dev libgmock-dev libwayland-dev libegl1-mesa-dev \
+          lcov gcovr bc
+    
+    - name: Display build configuration
+      run: |
+        echo "Build Type: ${{ matrix.build_type }}"
+        echo "Coverage: ${{ matrix.coverage }}"
+        cmake --version
+        gcc --version
+    
+    - name: Create build directory
+      run: |
+        cd L1
+        mkdir -p build
+    
+    - name: Configure CMake
+      run: |
+        cd L1/build
+        cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+              -DENABLE_COVERAGE=${{ matrix.coverage }} \
+              ..
+    
+    - name: Build
+      run: |
+        cd L1/build
+        make -j$(nproc)
+    
+    - name: Run tests
+      run: |
+        cd L1/build
+        ./westeros_gl_l1_tests --gtest_output=xml:test_results.xml
+    
+    - name: Generate coverage report
+      if: matrix.coverage == 'ON'
+      run: |
+        cd L1/build
+        make coverage
+    
+    - name: Check coverage threshold
+      if: matrix.coverage == 'ON'
+      run: |
+        cd L1/build
+        COVERAGE=$(lcov --summary coverage_filtered.info 2>&1 | grep "lines" | awk '{print $2}' | sed 's/%//')
+        echo "Code coverage: $COVERAGE%"
+        
+        THRESHOLD=70
+        if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+          echo "::error::Code coverage $COVERAGE% is below threshold $THRESHOLD%"
+          exit 1
+        else
+          echo "::notice::Code coverage $COVERAGE% meets threshold $THRESHOLD%"
+        fi
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.build_type }}-${{ matrix.coverage }}
+        path: L1/build/test_results.xml
+    
+    - name: Upload coverage report (HTML)
+      if: matrix.coverage == 'ON'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-html
+        path: L1/build/coverage_html/
+    
+    - name: Upload coverage report (LCOV)
+      if: matrix.coverage == 'ON'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-lcov
+        path: L1/build/coverage_filtered.info
+    
+    - name: Display test summary
+      if: always()
+      run: |
+        cd L1/build
+        if [ -f test_results.xml ]; then
+          echo "Test results summary:"
+          grep -E "tests=|failures=|errors=" test_results.xml || true
+        fi
+
+  build-summary:
+    needs: build-and-test
+    runs-on: ubuntu-22.04
+    if: always()
+    
+    steps:
+    - name: Display summary
+      run: |
+        echo "=========================================="
+        echo "Build and Test Summary"
+        echo "=========================================="
+        echo "All test configurations completed"
+        echo "Check individual job results for details"

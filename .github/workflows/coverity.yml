@@ -1,0 +1,192 @@
+name: Coverity Static Analysis - Westeros GL BRCM
+
+on:
+  push:
+    branches: [ main, master, feature/RDKEMW-13180 ]
+  schedule:
+    # Run Coverity scan weekly on Mondays at 2 AM UTC
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+jobs:
+  coverity-scan:
+    runs-on: ubuntu-latest
+    if: success() && ((github.event_name == 'push') || (github.event_name == 'workflow_dispatch') || (github.event_name == 'schedule'))
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+    
+    - name: Install System Dependencies
+      run: |
+        echo "Installing dependencies for Coverity build..."
+        chmod +x scripts/setup.sh
+        ./scripts/setup.sh
+    
+    - name: Display Coverity Configuration
+      run: |
+        echo "=========================================="
+        echo "Coverity Static Analysis for Westeros GL BRCM"
+        echo "=========================================="
+        echo "Repository: ${{ github.repository }}"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Triggered by: ${{ github.event_name }}"
+        echo "=========================================="
+    
+    - name: Check Coverity Secrets
+      run: |
+        if [ -z "${{ secrets.COVERITY_SCAN_TOKEN }}" ]; then
+          echo "⚠️ WARNING: COVERITY_SCAN_TOKEN secret not set"
+          echo "Please configure the following repository secrets:"
+          echo "  - COVERITY_SCAN_TOKEN: Your Coverity Scan token"
+          echo "  - COVERITY_SCAN_EMAIL: Email for Coverity notifications"
+          echo ""
+          echo "Continuing with build verification only..."
+          echo "SKIP_COVERITY_SUBMIT=true" >> $GITHUB_ENV
+        else
+          echo "✓ Coverity secrets configured"
+          echo "SKIP_COVERITY_SUBMIT=false" >> $GITHUB_ENV
+        fi
+    
+    - name: Download Coverity Build Tool
+      if: env.SKIP_COVERITY_SUBMIT != 'true'
+      run: |
+        echo "Downloading Coverity Build Tool..."
+        wget -q https://scan.coverity.com/download/linux64 \
+          --post-data "token=${{ secrets.COVERITY_SCAN_TOKEN }}&project=${{ github.repository }}" \
+          -O coverity_tool.tgz
+        
+        echo "Extracting Coverity Build Tool..."
+        mkdir coverity-tool
+        tar xzf coverity_tool.tgz --strip 1 -C coverity-tool
+        
+        echo "✓ Coverity Build Tool ready"
+        ls -la coverity-tool/bin/
+      env:
+        COVERITY_SCAN_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+    
+    - name: Setup Environment for Coverity
+      run: |
+        echo "Setting up build environment for Coverity analysis..."
+        
+        if [ "${{ env.SKIP_COVERITY_SUBMIT }}" != "true" ]; then
+          # Add Coverity to PATH
+          export COVERITY_HOME="$(pwd)/coverity-tool"
+          export PATH="$COVERITY_HOME/bin:$PATH"
+          echo "COVERITY_HOME=$COVERITY_HOME" >> $GITHUB_ENV
+          echo "PATH=$PATH" >> $GITHUB_ENV
+        fi
+        
+        echo "✓ Environment configured"
+    
+    - name: Build with Coverity
+      if: env.SKIP_COVERITY_SUBMIT != 'true'
+      run: |
+        echo "Building westeros-gl with Coverity instrumentation..."
+        chmod +x scripts/build.sh
+        ./scripts/build.sh --coverity
+        ls -la cov-int/
+    
+    - name: Build without Coverity (verification)
+      if: env.SKIP_COVERITY_SUBMIT == 'true'
+      run: |
+        echo "Building westeros-gl for verification (no Coverity submission)..."
+        chmod +x scripts/build.sh
+        ./scripts/build.sh --coverity
+        echo "✓ Build verification complete"
+    
+    - name: Analyze Coverity Results Locally
+      if: env.SKIP_COVERITY_SUBMIT != 'true'
+      run: |
+        echo "=========================================="
+        echo "Coverity Build Analysis Summary"
+        echo "=========================================="
+        
+        if [ -d "cov-int" ]; then
+          echo "Coverity intermediate directory size:"
+          du -sh cov-int/
+          
+          echo ""
+          echo "Build log summary:"
+          if [ -f "cov-int/build-log.txt" ]; then
+            tail -20 cov-int/build-log.txt
+          fi
+          
+          echo ""
+          echo "Compilation units analyzed:"
+          find cov-int -name "*.c" -o -name "*.cpp" | wc -l
+        fi
+        echo "=========================================="
+    
+    - name: Package Coverity Results
+      if: env.SKIP_COVERITY_SUBMIT != 'true'
+      run: |
+        echo "Packaging Coverity analysis results..."
+        tar czvf westeros-gl-brcm-coverity.tgz cov-int
+        
+        echo ""
+        echo "Package details:"
+        ls -lh westeros-gl-brcm-coverity.tgz
+        echo "✓ Results packaged"
+    
+    - name: Submit to Coverity Scan
+      if: env.SKIP_COVERITY_SUBMIT != 'true'
+      run: |
+        echo "Submitting to Coverity Scan..."
+        
+        curl --form token=${{ secrets.COVERITY_SCAN_TOKEN }} \
+          --form email=${{ secrets.COVERITY_SCAN_EMAIL }} \
+          --form file=@westeros-gl-brcm-coverity.tgz \
+          --form version="${{ github.sha }}" \
+          --form description="Automated Coverity Scan - ${{ github.event_name }} - Branch: ${{ github.ref_name }}" \
+          https://scan.coverity.com/builds?project=${{ github.repository }}
+        
+        echo ""
+        echo "✓ Submission complete"
+        echo ""
+        echo "📊 Coverity Scan results will be available at:"
+        echo "   https://scan.coverity.com/projects/${{ github.repository }}"
+      env:
+        COVERITY_SCAN_TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN }}
+        COVERITY_SCAN_EMAIL: ${{ secrets.COVERITY_SCAN_EMAIL }}
+    
+    - name: Upload Coverity Artifacts
+      if: always() && !env.ACT
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverity-analysis-results
+        path: |
+          cov-int/
+          westeros-gl-brcm-coverity.tgz
+          cov-int/build-log.txt
+        retention-days: 30
+        if-no-files-found: ignore
+    
+    - name: Coverity Summary
+      if: always()
+      run: |
+        echo "=========================================="
+        echo "Coverity Analysis Summary"
+        echo "=========================================="
+        echo "Status: ${{ job.status }}"
+        echo "Event: ${{ github.event_name }}"
+        echo "Commit: ${{ github.sha }}"
+        
+        if [ "${{ env.SKIP_COVERITY_SUBMIT }}" = "true" ]; then
+          echo ""
+          echo "⚠️ Coverity submission was skipped"
+          echo "   Configure COVERITY_SCAN_TOKEN and COVERITY_SCAN_EMAIL secrets"
+          echo "   to enable automatic Coverity Scan submissions"
+        else
+          echo ""
+          echo "✓ Analysis artifacts uploaded"
+          echo ""
+          echo "📊 View results at:"
+          echo "   • Coverity Scan: https://scan.coverity.com/projects/${{ github.repository }}"
+          echo "   • Download 'coverity-analysis-results' artifact for local inspection"
+        fi
+        echo "=========================================="
