@@ -59,6 +59,32 @@ AC_ARG_ENABLE([nxclient_local],
 AM_CONDITIONAL([NXCLIENT_LOCAL], [test x$NXCLIENT_LOCAL = xtrue])
 AC_SUBST(NXCLIENT_LOCAL)
 
+ENABLE_WESTEROS_LDBPROTOCOL=false
+AC_ARG_ENABLE([ldbprotocol],
+              AS_HELP_STRING([--enable-ldbprotocol],[enable linux dmabuf protocol (default is no)]),
+              [
+                case "${enableval}" in
+                 yes) ENABLE_WESTEROS_LDBPROTOCOL=true ;;
+                  no) ENABLE_WESTEROS_LDBPROTOCOL=false ;;
+                   *) AC_MSG_ERROR([bad value ${enableval} for --enable-ldbprotocol]) ;;
+                esac
+              ],
+              [echo "linux dmabuf protocol is disabled"])
+AM_CONDITIONAL([ENABLE_WESTEROS_LDBPROTOCOL], [test x$ENABLE_WESTEROS_LDBPROTOCOL = xtrue])
+
+ENABLE_WESTEROS_LEXPSYNCPROTOCOL=false
+AC_ARG_ENABLE([lexpsyncprotocol],
+              AS_HELP_STRING([--enable-lexpsyncprotocol],[enable linux_explicit_synchronization_unstable_v1 protocol (default is no)]),
+              [
+                case "${enableval}" in
+                 yes) ENABLE_WESTEROS_LEXPSYNCPROTOCOL=true ;;
+                  no) ENABLE_WESTEROS_LEXPSYNCPROTOCOL=false ;;
+                   *) AC_MSG_ERROR([bad value ${enableval} for --enable-lexpsyncprotocol]) ;;
+                esac
+              ],
+              [echo "linux_explicit_synchronization_unstable_v1 protocol is disabled"])
+AM_CONDITIONAL([ENABLE_WESTEROS_LEXPSYNCPROTOCOL], [test x$ENABLE_WESTEROS_LEXPSYNCPROTOCOL = xtrue])
+
 # Checks for library functions.
 #Add the subdirectories to be considered for building.
 SUBDIRS=" "
@@ -77,4 +103,3 @@ AM_CONDITIONAL([HAVE_WAYLAND_EGL], [test x$WAYLAND_EGL_DETECTED = xtrue])
 AC_CONFIG_FILES([Makefile])
 AC_SUBST(GUPNP_VERSION)
 AC_OUTPUT
-

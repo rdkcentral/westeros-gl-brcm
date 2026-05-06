@@ -19,16 +19,24 @@
 
 SUBDIRS = 
 
-AM_CXXFLAGS = -DENABLE_SBPROTOCOL
+AM_CXXFLAGS = -DENABLE_SBPROTOCOL -DBCG_ABSTRACT -DENABLE_LDBPROTOCOL
 
-AM_CFLAGS = 
+AM_CFLAGS =
 
-AM_LDFLAGS = 
+AM_LDFLAGS =
 
+if ENABLE_WESTEROS_LEXPSYNCPROTOCOL
+AM_CXXFLAGS += -DENABLE_LEXPSYNCPROTOCOL -I$(srcdir)/../linux-expsync
+AM_CFLAGS   += -DENABLE_LEXPSYNCPROTOCOL -I$(srcdir)/../linux-expsync
+endif
 
 lib_LTLIBRARIES = libwesteros_render_nexus.la
 
-libwesteros_render_nexus_la_SOURCES = westeros-render-nexus.cpp
+libwesteros_render_nexus_la_SOURCES = \
+   protocol/brcm-gfx-buffer-protocol.c \
+   brcm-gfx-buffer.cpp \
+   westeros-render-nexus.cpp
+
 libwesteros_render_nexus_la_includedir = $(includedir)
 libwesteros_render_nexus_la_LDFLAGS= -lwesteros_simplebuffer_server
 if HAVE_WAYLAND_EGL
@@ -61,3 +69,4 @@ package_ipk:
 	rm -rf ${abs_top_builddir}/staging_dir
 	rm -rf $(abs_top_builddir)/ipk/control.tar.gz
 	rm -rf $(abs_top_builddir)/ipk/data.tar.gz
+

@@ -19,15 +19,54 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <memory.h>
+#include <dlfcn.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "westeros-render.h"
 #include "wayland-server.h"
 #include "wayland-client.h"
 #include "wayland-egl.h"
+#include "EGL/egl.h"
+#include "EGL/eglext.h"
+/* BCG_ABSTRACT: selects BCM STB buffer descriptor layout in begl_displayplatform.h.
+ * EMBEDDED_SETTOP_BOX + PLATFORM_HAS_NEXUS: makes v3d_ver.h take the STB/RDB path,
+ * which auto-includes bchp_v3d_hub_ctl.h and resolves V3D_TECH_VERSION etc. from
+ * BCHP RDB macros (BCHP_V3D_HUB_CTL_IDENT1_*, IDENT3_*).
+ * All three must be defined before begl_displayplatform.h is included. */
+#ifndef BCG_ABSTRACT
+#define BCG_ABSTRACT
+#endif
+#ifndef EMBEDDED_SETTOP_BOX
+#define EMBEDDED_SETTOP_BOX 1
+#endif
+#ifndef PLATFORM_HAS_NEXUS
+#define PLATFORM_HAS_NEXUS 1
+#endif
+#include "begl_displayplatform.h"
+
+/* BCM V3D buffer query functions - resolved at runtime via dlsym.
+ * GetWlBufferSettings: provided by libwlpl.so — queries DMA-BUF fd + format from
+ *   a wl_nexus wl_buffer (server-side compositor path after eglBindWaylandDisplayWL).
+ * LFMTToNexus / BeglToNexusFormat: convert V3D pixel format to NEXUS_PixelFormat.
+ * CloneMemoryFromDescriptor: imports DMA-BUF fd into Nexus as a MemoryBlockHandle. */
+typedef bool (*fn_GetWlBufferSettings_t)(struct wl_resource *buffer, BEGL_BufferInfo *settings);
+
+#ifndef EGL_WAYLAND_BUFFER_WL
+#define EGL_WAYLAND_BUFFER_WL 0x31D5
+#endif
+#ifndef EGL_PLATFORM_WAYLAND_EXT
+#define EGL_PLATFORM_WAYLAND_EXT 0x31D8
+#endif
 
 #ifdef ENABLE_SBPROTOCOL
 #include "westeros-simplebuffer.h"
 #endif
+#ifdef ENABLE_LDBPROTOCOL
+#include "westeros-linux-dmabuf.h"
+#endif
+#include "brcm-gfx-buffer.h"
 
 #include "nexus_config.h"
 #include "nexus_platform.h"
@@ -40,7 +79,32 @@
 #include "nexus_video_decoder.h"
 #endif
 
+#include "bchp_common.h"
+#if BCHP_M2MC_REG_START
+#include "bchp_m2mc.h"
+#define M2MC_HAS_UIF_SUPPORT (BCHP_M2MC_REVISION_MAJOR_DEFAULT >= 2)
+#else
+#define M2MC_HAS_UIF_SUPPORT false
+#endif
+#ifdef BCHP_SCALER_REG_START
+#include "bchp_scaler.h"
+#define HVS_HAS_UIF_SUPPORT (BCHP_SCALER_VERSION_VERSION_DEFAULT >= 0x50)
+#else
+#define HVS_HAS_UIF_SUPPORT false
+#endif
+
 #include <vector>
+#include <map>
+#include <cassert>
+#include <memory>
+
+/* Typedefs here (after nexus headers) so NEXUS_PixelFormat, NEXUS_MemoryBlockHandle
+ * and BEGL_BufferFormat are all declared.
+ * refsw14.4 (URSR < 22): LFMTToNexus returns NEXUS_PixelFormat directly.
+ * URSR22+:               LFMTToNexus(lfmt, *out) returns bool. */
+typedef NEXUS_PixelFormat (*fn_LFMTToNexus_t)(GFX_LFMT_T lfmt);
+typedef bool (*fn_BeglToNexusFormat_t)(NEXUS_PixelFormat *result, BEGL_BufferFormat format);
+typedef NEXUS_MemoryBlockHandle (*fn_CloneMemoryFromDescriptor_t)(int fd);
 
 #define WST_UNUSED( n ) ((void)n)
 
@@ -73,19 +137,31 @@ struct _WstRenderSurface
    NEXUS_SurfaceHandle surface[NUM_SURFACES];
    NEXUS_SurfaceHandle surfacePending;
    NEXUS_SurfaceHandle surfacePush;
+
+   // A map of Nexus surfaces from the brcm-gfx-buffer in use.
+   // Once the wl_buffer is gone and an entry here is gone the surface is destroyed.
+   std::map<NEXUS_SurfaceHandle, std::shared_ptr<NEXUS_Surface>> bgbInUse;
+
    WstRect rectCurr;
 };
 
 typedef struct _WstRendererNX
 {
    WstRenderer *renderer;
+   struct brcm_gfx_buffer *bgb;
    int outputWidth;
    int outputHeight;
    std::vector<WstRenderSurface*> surfaces;
    bool isDelegate;
    bool secureGraphics;
 
+   fn_LFMTToNexus_t fnLFMTToNexus;
+   fn_BeglToNexusFormat_t fnBeglToNexusFormat;
+   fn_GetWlBufferSettings_t fnGetWlBufferSettings;
+   fn_CloneMemoryFromDescriptor_t fnCloneMemoryFromDescriptor;
+
    EGLDisplay eglDisplay;
+   EGLContext eglContext;
    bool haveWaylandEGL;
    PFNEGLBINDWAYLANDDISPLAYWL eglBindWaylandDisplayWL;
    PFNEGLUNBINDWAYLANDDISPLAYWL eglUnbindWaylandDisplayWL;
@@ -137,6 +213,18 @@ static void gfxCheckpoint(void *data, int unused)
     BKNI_SetEvent((BKNI_EventHandle)data);
 }
 
+static void wstBGBAcquire( WstRenderSurface *surface, std::shared_ptr<NEXUS_Surface> ptr )
+{
+   if (ptr)
+      surface->bgbInUse[ptr.get()] = ptr;
+}
+
+static void wstBGBRelease( WstRenderSurface *surface, NEXUS_SurfaceHandle handle )
+{
+   if (handle)
+      surface->bgbInUse.erase(handle);
+}
+
 static void wstRendererPushSurface( WstRendererNX *renderer, WstRenderSurface *surface )
 {
    NEXUS_Error rc;
@@ -160,6 +248,9 @@ static void wstRendererPushSurface( WstRendererNX *renderer, WstRenderSurface *s
          NEXUS_SurfaceHandle surface_list[10];
          int rc = NEXUS_SurfaceClient_RecycleSurface(surface->gfxSurfaceClient, surface_list, 10, &n);
          if (rc) break;
+
+         for (size_t i = 0; i < n; i++)
+            wstBGBRelease(surface, surface_list[i]);
       }
       while (n >= 10);
    }
@@ -262,53 +353,102 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
          }
       }
 
+      rendererNX->bgb = WstBGBInit(renderer->display);
+      if (!rendererNX->bgb)
+         printf("WstGLInit: WstBGBInit failed.\n");
+      /* wl_nexus is registered via eglBindWaylandDisplayWL below.
+       * BCM V3D EGL only exposes EGL_WL_bind_wayland_display AFTER an EGL context is
+       * active.  Create a minimal surfaceless context (EGL_KHR_surfaceless_context is
+       * supported on this platform) to wake up the extension, then bind. */
       if ( renderer->display )
       {
-         rendererNX->eglDisplay= eglGetDisplay(EGL_DEFAULT_DISPLAY);
+         rendererNX->eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
 
-         const char *extensions= eglQueryString( rendererNX->eglDisplay, EGL_EXTENSIONS );
-         if ( extensions )
+         EGLint major, minor;
+         if ( !eglInitialize( rendererNX->eglDisplay, &major, &minor ) )
          {
-            if ( !strstr( extensions, "EGL_WL_bind_wayland_display" ) )
+            printf("westeros_render_nexus: eglInitialize failed: %X\n", eglGetError() );
+         }
+         else
+         {
+            printf("westeros_render_nexus: eglInitialize OK: major=%d minor=%d eglDisplay=%p\n", major, minor, rendererNX->eglDisplay);
+         }
+
+         /* Create a surfaceless GLES2 context to expose display-level extensions. */
+         static const EGLint configAttribs[] = {
+            EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+            EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+            EGL_NONE
+         };
+         EGLConfig config = EGL_NO_CONFIG_KHR;
+         EGLint numConfigs = 0;
+         if ( eglChooseConfig(rendererNX->eglDisplay, configAttribs, &config, 1, &numConfigs) && numConfigs > 0 )
+         {
+            static const EGLint ctxAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
+            rendererNX->eglContext = eglCreateContext(rendererNX->eglDisplay, config, EGL_NO_CONTEXT, ctxAttribs);
+            if ( rendererNX->eglContext && rendererNX->eglContext != EGL_NO_CONTEXT )
             {
-               printf("wayland-egl support expected, but not advertised by eglQueryString(eglDisplay,EGL_EXTENSIONS): not attempting to use\n" );
+               EGLBoolean mc = eglMakeCurrent(rendererNX->eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, rendererNX->eglContext);
+               printf("westeros_render_nexus: surfaceless EGL context: %p makeCurrent=%d\n", rendererNX->eglContext, mc);
             }
             else
             {
-               printf("wayland-egl support expected, and is advertised by eglQueryString(eglDisplay,EGL_EXTENSIONS): proceeding to use \n" );
-            
-               rendererNX->eglBindWaylandDisplayWL= (PFNEGLBINDWAYLANDDISPLAYWL)eglGetProcAddress("eglBindWaylandDisplayWL");
-               printf( "eglBindWaylandDisplayWL %p\n", rendererNX->eglBindWaylandDisplayWL );
+               printf("westeros_render_nexus: eglCreateContext failed: %X\n", eglGetError());
+            }
+         }
+         else
+         {
+            printf("westeros_render_nexus: eglChooseConfig found no configs\n");
+         }
 
-               rendererNX->eglUnbindWaylandDisplayWL= (PFNEGLUNBINDWAYLANDDISPLAYWL)eglGetProcAddress("eglUnbindWaylandDisplayWL");
-               printf( "eglUnbindWaylandDisplayWL %p\n", rendererNX->eglUnbindWaylandDisplayWL );
+         const char *extensions = eglQueryString( rendererNX->eglDisplay, EGL_EXTENSIONS );
+         if ( extensions && strstr( extensions, "EGL_WL_bind_wayland_display" ) )
+         {
+            rendererNX->eglBindWaylandDisplayWL = (PFNEGLBINDWAYLANDDISPLAYWL)eglGetProcAddress("eglBindWaylandDisplayWL");
+            rendererNX->eglUnbindWaylandDisplayWL = (PFNEGLUNBINDWAYLANDDISPLAYWL)eglGetProcAddress("eglUnbindWaylandDisplayWL");
+            rendererNX->eglQueryWaylandBufferWL = (PFNEGLQUERYWAYLANDBUFFERWL)eglGetProcAddress("eglQueryWaylandBufferWL");
+            printf("westeros_render_nexus: eglBindWaylandDisplayWL=%p\n", rendererNX->eglBindWaylandDisplayWL);
 
-               rendererNX->eglQueryWaylandBufferWL= (PFNEGLQUERYWAYLANDBUFFERWL)eglGetProcAddress("eglQueryWaylandBufferWL");
-               printf( "eglQueryWaylandBufferWL %p\n", rendererNX->eglQueryWaylandBufferWL );
-               
-               if ( rendererNX->eglBindWaylandDisplayWL &&
-                    rendererNX->eglUnbindWaylandDisplayWL &&
-                    rendererNX->eglQueryWaylandBufferWL )
-               {               
-                  printf("calling eglBindWaylandDisplayWL with eglDisplay %p and wayland display %p\n", rendererNX->eglDisplay, renderer->display );
-                  EGLBoolean rc= rendererNX->eglBindWaylandDisplayWL( rendererNX->eglDisplay, renderer->display );
-                  if ( rc )
-                  {
-                     rendererNX->haveWaylandEGL= true;
-                  }
-                  else
-                  {
-                     printf("eglBindWaylandDisplayWL failed: %x\n", eglGetError() );
-                  }
+            if ( rendererNX->eglBindWaylandDisplayWL &&
+                 rendererNX->eglUnbindWaylandDisplayWL &&
+                 rendererNX->eglQueryWaylandBufferWL )
+            {
+               printf("calling eglBindWaylandDisplayWL with eglDisplay %p and wayland display %p\n", rendererNX->eglDisplay, renderer->display);
+               EGLBoolean rc = rendererNX->eglBindWaylandDisplayWL( rendererNX->eglDisplay, renderer->display );
+               if ( rc )
+               {
+                  rendererNX->haveWaylandEGL = true;
                }
                else
                {
-                  printf("wayland-egl support expected, and advertised, but methods are missing: no wayland-egl\n" );
+                  printf("eglBindWaylandDisplayWL failed: %X\n", eglGetError());
                }
             }
          }
-         printf("have wayland-egl: %d\n", rendererNX->haveWaylandEGL );
+         else
+         {
+            printf("westeros_render_nexus: EGL_WL_bind_wayland_display NOT in extensions (extensions: %s)\n",
+                   extensions ? extensions : "(null)");
+         }
+         printf("have wayland-egl: %d\n", rendererNX->haveWaylandEGL);
       }
+
+      /* Resolve BCM V3D format conversion functions from RTLD_DEFAULT scope. */
+      rendererNX->fnLFMTToNexus =
+         (fn_LFMTToNexus_t)dlsym(RTLD_DEFAULT, "LFMTToNexus");
+      rendererNX->fnBeglToNexusFormat =
+         (fn_BeglToNexusFormat_t)dlsym(RTLD_DEFAULT, "BeglToNexusFormat");
+      rendererNX->fnGetWlBufferSettings =
+         (fn_GetWlBufferSettings_t)dlsym(RTLD_DEFAULT, "GetWlBufferSettings");
+      rendererNX->fnCloneMemoryFromDescriptor =
+         (fn_CloneMemoryFromDescriptor_t)dlsym(RTLD_DEFAULT, "NEXUS_Platform_CloneMemoryFromDescriptor");
+      printf("westeros_render_nexus: LFMTToNexus=%p GetWlBufferSettings=%p CloneMemory=%p\n",
+             (void*)rendererNX->fnLFMTToNexus,
+             (void*)rendererNX->fnGetWlBufferSettings,
+             (void*)rendererNX->fnCloneMemoryFromDescriptor);
+      if (!rendererNX->fnCloneMemoryFromDescriptor)
+         printf("westeros_render_nexus: WARNING: NEXUS_Platform_CloneMemoryFromDescriptor NOT found via dlsym — direct call will be used\n");
    }
 
 exit:
@@ -322,11 +462,16 @@ static void wstRendererNXDestroy( WstRendererNX *renderer )
       if ( renderer->haveWaylandEGL )
       {
          renderer->eglUnbindWaylandDisplayWL( renderer->eglDisplay, renderer->renderer->display );
-         renderer->haveWaylandEGL= false;
+         renderer->haveWaylandEGL = false;
       }
-
+      if ( renderer->eglContext && renderer->eglContext != EGL_NO_CONTEXT )
+      {
+         eglMakeCurrent( renderer->eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT );
+         eglDestroyContext( renderer->eglDisplay, renderer->eglContext );
+         renderer->eglContext = EGL_NO_CONTEXT;
+      }
+      WstBGBUninit( renderer->bgb );
       free( renderer );
-      
       NxClient_Uninit();
    }
 }
@@ -338,9 +483,10 @@ static WstRenderSurface* wstRenderNXCreateSurface( WstRendererNX *renderer )
 
    WST_UNUSED(renderer);   
    
-   surface= (WstRenderSurface*)calloc( 1, sizeof(WstRenderSurface) );
-   if ( surface )
+   try
    {
+      surface= new WstRenderSurface();
+
       NxClient_AllocSettings allocSettings;
       NEXUS_SurfaceComposition composition;
       NEXUS_SurfaceClientSettings clientSettings;
@@ -394,7 +540,11 @@ static WstRenderSurface* wstRenderNXCreateSurface( WstRendererNX *renderer )
       clientSettings.displayed.context= surface->displayedEvent;
       NEXUS_SurfaceClient_SetSettings(surface->gfxSurfaceClient, &clientSettings);
    }
-   
+   catch (...)
+   {
+      surface = nullptr;
+   }
+
    return surface;
 }
 
@@ -408,10 +558,13 @@ void wstRendererNXDestroySurface( WstRendererNX *renderer, WstRenderSurface *sur
 
       if ( surface->gfxSurfaceClient )
       {
+         NEXUS_SurfaceClient_Clear(surface->gfxSurfaceClient);
          NEXUS_SurfaceClient_Release(surface->gfxSurfaceClient);
          surface->gfxSurfaceClient= 0;
       }
-      
+
+      surface->bgbInUse.clear();
+
       if ( surface->eventCreated )
       {
          surface->eventCreated= false;
@@ -419,8 +572,8 @@ void wstRendererNXDestroySurface( WstRendererNX *renderer, WstRenderSurface *sur
       }
 
       NxClient_Free(&surface->allocResults);
-      
-      free( surface );
+
+      delete surface;
    }
 }
 
@@ -594,29 +747,174 @@ static void wstRendererNXCommitSB( WstRendererNX *renderer, WstRenderSurface *su
 }
 #endif
 
-#if defined (WESTEROS_HAVE_WAYLAND_EGL)
-static void wstRendererNXCommitBNXS( WstRendererNX *renderer, WstRenderSurface *surface, struct wl_resource *resource )
+/* wstRendererNXCommitWlNexus: handles wl_nexus EGL buffers on V3D/WLPL platform.
+ * BCM SWRDKV-3539 WLPL adaptation: uses GetWlBufferSettings + CloneMemoryFromDescriptor.
+ * The DMA-BUF fd is imported into Nexus and surface is tracked in bgbInUse —
+ * destroyed ONLY after Nexus recycles it via RecycleSurface. */
+static bool wstRendererNXCommitWlNexus( WstRendererNX *renderer, WstRenderSurface *surface, struct wl_resource *resource )
 {
-   NEXUS_Error rc;
-   int bufferWidth, bufferHeight;
-   void *deviceBuffer;
+   if ( !renderer->fnGetWlBufferSettings )
+      return false;
 
-   deviceBuffer= wl_egl_get_device_buffer( resource );   
-   if ( deviceBuffer )
+   BEGL_BufferInfo info;
+   memset(&info, 0, sizeof(info));
+   info.plane[0].fd = -1;
+
+   if ( !renderer->fnGetWlBufferSettings(resource, &info) )
+      return false;
+
+   int dmaFd = info.plane[0].fd;
+   if ( dmaFd < 0 || info.descs[0].width == 0 || info.descs[0].height == 0 )
    {
-      NEXUS_SurfaceHandle surfaceIn;
+      printf("wstRendererNXCommitWlNexus: bad buffer info fd=%d w=%u h=%u\n",
+             dmaFd, info.descs[0].width, info.descs[0].height);
+      if ( dmaFd >= 0 ) close(dmaFd);
+      return false;
+   }
+
+   if ( fcntl(dmaFd, F_GETFD) < 0 )
+   {
+      printf("wstRendererNXCommitWlNexus: fd=%d invalid (errno=%d)\n", dmaFd, errno);
+      return false;
+   }
+
+   NEXUS_MemoryBlockHandle MbHandle;
+   if ( renderer->fnCloneMemoryFromDescriptor )
+      MbHandle = renderer->fnCloneMemoryFromDescriptor(dmaFd);
+   else
+      MbHandle = NEXUS_Platform_CloneMemoryFromDescriptor(dmaFd);
+
+   close(dmaFd);
+   if ( !MbHandle )
+   {
+      printf("wstRendererNXCommitWlNexus: CloneMemoryFromDescriptor failed\n");
+      return false;
+   }
+
+   NEXUS_SurfaceCreateSettings surfaceCreateSettings;
+   NEXUS_Surface_GetDefaultCreateSettings(&surfaceCreateSettings);
+
+   {
+      uint32_t reportedPitch = info.descs[0].planes[0].pitch;
+      uint32_t linearPitch   = info.descs[0].width * 4;
+      bool isUIF = (reportedPitch > 0 && reportedPitch != linearPitch);
+
+#if M2MC_HAS_UIF_SUPPORT || HVS_HAS_UIF_SUPPORT
+      if ( isUIF )
+      {
+         surfaceCreateSettings.pixelFormat = NEXUS_PixelFormat_eUIF_A8_B8_G8_R8;
+         surfaceCreateSettings.pitch = reportedPitch;
+      }
+      else
+#endif
+      {
+         surfaceCreateSettings.pixelFormat = NEXUS_PixelFormat_eA8_B8_G8_R8;
+         if ( reportedPitch >= linearPitch )
+            surfaceCreateSettings.pitch = reportedPitch;
+      }
+   }
+
+   surfaceCreateSettings.width      = info.descs[0].width;
+   surfaceCreateSettings.height     = info.descs[0].height;
+   surfaceCreateSettings.pMemory    = NULL;
+   surfaceCreateSettings.pixelMemory = MbHandle;
+
+   NEXUS_SurfaceHandle nexusSurface = NEXUS_Surface_Create(&surfaceCreateSettings);
+   if ( !nexusSurface )
+   {
+      printf("wstRendererNXCommitWlNexus: NEXUS_Surface_Create failed (fmt=%d)\n",
+             (int)surfaceCreateSettings.pixelFormat);
+      NEXUS_MemoryBlock_Free(MbHandle);
+      return false;
+   }
+
+   if ( (surface->width != (int)surfaceCreateSettings.width) ||
+        (surface->height != (int)surfaceCreateSettings.height) )
+   {
+      NEXUS_SurfaceComposition composition;
+      if ( !surface->sizeOverride )
+      {
+         surface->width  = surfaceCreateSettings.width;
+         surface->height = surfaceCreateSettings.height;
+      }
+      if ( !renderer->isDelegate )
+      {
+         NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
+         composition.position.width  = surface->width;
+         composition.position.height = surface->height;
+         NxClient_SetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
+      }
+   }
+
+   auto deleter = [](NEXUS_SurfaceHandle s) {
+      if (!s) return;
+      NEXUS_SurfaceCreateSettings settings;
+      NEXUS_Surface_GetCreateSettings(s, &settings);
+      NEXUS_Surface_Destroy(s);
+      if (settings.pixelMemory)
+         NEXUS_MemoryBlock_Free(settings.pixelMemory);
+   };
+   std::shared_ptr<NEXUS_Surface> ptr(nexusSurface, deleter);
+
+   /* Do NOT pre-release old surface here — it may still be in Nexus's display
+    * pipeline. bgbInUse retains it until RecycleSurface returns it. */
+   wstBGBAcquire(surface, ptr);
+   surface->surfacePending = nexusSurface;
+   return true;
+}
+
+static void wstRendererNXCommitBGB( WstRendererNX *renderer, WstRenderSurface *surface, struct wl_resource *resource )
+{
+   auto ptr = WstBGBBufferGet(resource);
+   NEXUS_SurfaceHandle surfaceHandle = ptr.get();
+   if ( surfaceHandle )
+   {
+      NEXUS_SurfaceStatus surfaceStatus;
+      NEXUS_Surface_GetStatus(surfaceHandle, &surfaceStatus);
+      if ( (surface->width != (int)surfaceStatus.width) || (surface->height != (int)surfaceStatus.height) )
+      {
+         NEXUS_SurfaceComposition composition;
+
+         if ( !surface->sizeOverride )
+         {
+            surface->width = (int)surfaceStatus.width;
+            surface->height = (int)surfaceStatus.height;
+         }
+
+         if ( !renderer->isDelegate )
+         {
+            NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
+            composition.position.width= surface->width;
+            composition.position.height= surface->height;
+            NxClient_SetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
+         }
+      }
+
+      wstBGBRelease(surface, surface->surfacePending);
+      wstBGBAcquire(surface, ptr);
+      surface->surfacePending = surfaceHandle;
+   }
+   else
+   {
+      printf("wstRendererNXCommitBGB: WstBGBBufferGet failed\n");
+   }
+}
+
+static void wstRendererNXCommitNexusSurface( WstRendererNX *renderer, WstRenderSurface *surface, std::shared_ptr<NEXUS_Surface> ptr )
+{
+   NEXUS_SurfaceHandle surfaceHandle = ptr.get();
+   if ( surfaceHandle )
+   {
       NEXUS_SurfaceStatus surfaceStatusIn;
+      NEXUS_SurfaceComposition composition;
+      int bufferWidth, bufferHeight;
 
-      surfaceIn= (NEXUS_SurfaceHandle)deviceBuffer;
-      NEXUS_Surface_GetStatus( surfaceIn, &surfaceStatusIn );
-
+      NEXUS_Surface_GetStatus( surfaceHandle, &surfaceStatusIn );
       bufferWidth= surfaceStatusIn.width;
       bufferHeight= surfaceStatusIn.height;
 
       if ( (surface->width != bufferWidth) || (surface->height != bufferHeight) )
       {
-         NEXUS_SurfaceComposition composition;
-         
          if ( !surface->sizeOverride )
          {
             surface->width= bufferWidth;
@@ -631,11 +929,280 @@ static void wstRendererNXCommitBNXS( WstRendererNX *renderer, WstRenderSurface *
             NxClient_SetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
          }
       }
-      
-      surface->surfacePending= surfaceIn;
+
+      surface->surfacePending= surfaceHandle;
+   }
+   else
+   {
+      printf("wstRendererNXCommitNexusSurface: failed - no surface handle\n");
    }
 }
+
+#ifdef ENABLE_LDBPROTOCOL
+static void wstRendererQueryDmabufFormats( WstRenderer *renderer, int **formats, int *num_formats )
+{
+   static const int supportedFormats[] =
+   {
+      DRM_FORMAT_RGBA4444,
+      DRM_FORMAT_ABGR4444,
+      DRM_FORMAT_RGBA5551,
+      DRM_FORMAT_ABGR1555,
+      DRM_FORMAT_RGB565,
+      DRM_FORMAT_BGR888,
+      DRM_FORMAT_ABGR8888,
+      DRM_FORMAT_RGBA8888,
+      DRM_FORMAT_XBGR8888,
+      DRM_FORMAT_RGBX8888,
+      DRM_FORMAT_ABGR2101010,
+      DRM_FORMAT_XBGR2101010,
+      DRM_FORMAT_YUYV,
+   };
+
+   *num_formats= 0;
+   *formats= 0;
+
+   int *theFormats= (int*)malloc(sizeof(supportedFormats));
+   if (!theFormats)
+   {
+      printf("wstRendererQueryDmabufFormats: failed to get memory\n");
+      return;
+   }
+
+   memcpy(theFormats, supportedFormats, sizeof(supportedFormats));
+   *num_formats= sizeof(supportedFormats) / sizeof(supportedFormats[0]);
+   *formats= theFormats;
+}
+
+static void wstRendererQueryDmabufModifiers( WstRenderer *renderer, int format, uint64_t **modifiers, int *num_modifiers )
+{
+   static const uint64_t rso[] = { DRM_FORMAT_MOD_LINEAR };
+   static const int rso_count = sizeof(rso) / sizeof(rso[0]);
+
+#if M2MC_HAS_UIF_SUPPORT || HVS_HAS_UIF_SUPPORT
+   static const uint64_t rso_uif[] = {
+      DRM_FORMAT_MOD_BROADCOM_UIF,
+      DRM_FORMAT_MOD_LINEAR
+   };
+   static const int rso_uif_count = sizeof(rso_uif) / sizeof(rso_uif[0]);
+
+#ifdef DRM_FORMAT_MOD_BROADCOM_BLGC
+   static const uint64_t rso_uif_blgc[] = {
+      DRM_FORMAT_MOD_BROADCOM_BLGC,
+      DRM_FORMAT_MOD_BROADCOM_UIF,
+      DRM_FORMAT_MOD_LINEAR
+   };
+   static const int rso_uif_blgc_count = sizeof(rso_uif_blgc) / sizeof(rso_uif_blgc[0]);
 #endif
+#endif
+
+   const uint64_t *src = NULL;
+   uint32_t count = 0;
+
+   switch (format)
+   {
+      case DRM_FORMAT_RGBA4444:
+      case DRM_FORMAT_ABGR4444:
+      case DRM_FORMAT_RGBA5551:
+      case DRM_FORMAT_ABGR1555:
+      case DRM_FORMAT_RGBA8888:
+      case DRM_FORMAT_RGBX8888:
+      case DRM_FORMAT_BGR888:
+         src = rso; count = rso_count; break;
+
+      case DRM_FORMAT_RGB565:
+#if M2MC_HAS_UIF_SUPPORT || HVS_HAS_UIF_SUPPORT
+         src = rso_uif; count = rso_uif_count;
+#else
+         src = rso; count = rso_count;
+#endif
+         break;
+
+      case DRM_FORMAT_ABGR8888:
+      case DRM_FORMAT_XBGR8888:
+      case DRM_FORMAT_ABGR2101010:
+      case DRM_FORMAT_XBGR2101010:
+#if M2MC_HAS_UIF_SUPPORT || HVS_HAS_UIF_SUPPORT
+         src = rso_uif; count = rso_uif_count; /* BLGC not available, fallback to UIF */
+#else
+         src = rso; count = rso_count;
+#endif
+         break;
+
+      case DRM_FORMAT_YUYV:
+         src = rso; count = rso_count; break;
+
+      default: break;
+   }
+
+   *num_modifiers= 0;
+   *modifiers= 0;
+
+   if (!src || !count) return;
+
+   uint64_t *theModifiers= (uint64_t*)calloc(count, sizeof(uint64_t));
+   if (!theModifiers)
+   {
+      printf("wstRendererQueryDmabufModifiers: failed to alloc memory\n");
+      return;
+   }
+
+   memcpy(theModifiers, src, count * sizeof(uint64_t));
+   *num_modifiers= count;
+   *modifiers= theModifiers;
+}
+
+static NEXUS_PixelFormat wstGetNexusPixelFormatLDB( uint32_t plane, uint32_t fourcc, uint64_t modifier )
+{
+   switch (modifier)
+   {
+   case DRM_FORMAT_MOD_LINEAR:
+   case DRM_FORMAT_MOD_INVALID:
+      if (plane != 0) return NEXUS_PixelFormat_eUnknown;
+      switch (fourcc)
+      {
+      case DRM_FORMAT_RGB565:       return NEXUS_PixelFormat_eR5_G6_B5;
+      case DRM_FORMAT_RGBA4444:     return NEXUS_PixelFormat_eR4_G4_B4_A4;
+      case DRM_FORMAT_ABGR4444:     return NEXUS_PixelFormat_eA4_B4_G4_R4;
+      case DRM_FORMAT_RGBA5551:     return NEXUS_PixelFormat_eR5_G5_B5_A1;
+      case DRM_FORMAT_ABGR1555:     return NEXUS_PixelFormat_eA1_B5_G5_R5;
+      case DRM_FORMAT_RGBA8888:     return NEXUS_PixelFormat_eR8_G8_B8_A8;
+      case DRM_FORMAT_RGBX8888:     return NEXUS_PixelFormat_eR8_G8_B8_X8;
+      case DRM_FORMAT_ABGR8888:     return NEXUS_PixelFormat_eA8_B8_G8_R8;
+      case DRM_FORMAT_XBGR8888:     return NEXUS_PixelFormat_eX8_B8_G8_R8;
+      case DRM_FORMAT_BGR888:       return NEXUS_PixelFormat_eR8_G8_B8;
+      case DRM_FORMAT_YUYV:         return NEXUS_PixelFormat_eCr8_Y18_Cb8_Y08;
+      case DRM_FORMAT_ABGR2101010:  return NEXUS_PixelFormat_eA2_B10_G10_R10;
+      case DRM_FORMAT_XBGR2101010:  return NEXUS_PixelFormat_eX2_B10_G10_R10;
+      default:                      return NEXUS_PixelFormat_eUnknown;
+      }
+
+#if M2MC_HAS_UIF_SUPPORT || HVS_HAS_UIF_SUPPORT
+   case DRM_FORMAT_MOD_BROADCOM_UIF:
+      if (plane != 0) return NEXUS_PixelFormat_eUnknown;
+      switch (fourcc)
+      {
+      case DRM_FORMAT_RGB565:       return NEXUS_PixelFormat_eUIF_R5_G6_B5;
+      case DRM_FORMAT_ABGR8888:     return NEXUS_PixelFormat_eUIF_A8_B8_G8_R8;
+      case DRM_FORMAT_XBGR8888:     return NEXUS_PixelFormat_eUIF_X8_B8_G8_R8;
+      case DRM_FORMAT_ABGR2101010:  return NEXUS_PixelFormat_eUIF_A2_B10_G10_R10;
+      case DRM_FORMAT_XBGR2101010:  return NEXUS_PixelFormat_eUIF_A2_B10_G10_R10; /* eUIF_X2 not available */
+      default:                      return NEXUS_PixelFormat_eUnknown;
+      }
+
+#ifdef DRM_FORMAT_MOD_BROADCOM_BLGC
+   case DRM_FORMAT_MOD_BROADCOM_BLGC:
+      if (plane != 0) return NEXUS_PixelFormat_eUnknown;
+      switch (fourcc)
+      {
+      case DRM_FORMAT_ABGR8888:     return NEXUS_PixelFormat_eUIF_BLGC_A8_B8_G8_R8;
+      case DRM_FORMAT_XBGR8888:     return NEXUS_PixelFormat_eUIF_BLGC_X8_B8_G8_R8;
+      case DRM_FORMAT_ABGR2101010:  return NEXUS_PixelFormat_eUIF_BLGC_A2_B10_G10_R10;
+      case DRM_FORMAT_XBGR2101010:  return NEXUS_PixelFormat_eUIF_BLGC_X2_B10_G10_R10;
+      default:                      return NEXUS_PixelFormat_eUnknown;
+      }
+#endif
+#endif
+
+   default: return NEXUS_PixelFormat_eUnknown;
+   }
+}
+
+static NEXUS_SurfaceHandle wstCreateNexusHandleLDB( struct wl_ldb_buffer *buffer )
+{
+   int fd;
+   uint32_t fourcc = WstLDBBufferGetFormat(buffer);
+   uint64_t modifier = WstLDBBufferGetPlaneModifier(buffer, 0);
+   int32_t offset, stride;
+   NEXUS_PixelFormat format;
+   NEXUS_MemoryBlockHandle memoryHandle;
+   NEXUS_SurfaceCreateSettings surfaceCreateSettings;
+   NEXUS_SurfaceHandle surfaceHandle = nullptr;
+
+   if (WstLDBBufferGetUserData(buffer))
+      return nullptr;
+
+   format = wstGetNexusPixelFormatLDB(0, fourcc, modifier);
+   if (format == NEXUS_PixelFormat_eUnknown)
+      return nullptr;
+
+   fd = WstLDBBufferGetPlaneFd(buffer, 0);
+   memoryHandle = NEXUS_Platform_CloneMemoryFromDescriptor(fd);
+   if (!memoryHandle)
+      return nullptr;
+
+   WstLDBBufferGetPlaneOffsetAndStride(buffer, 0, &offset, &stride);
+
+   NEXUS_Surface_GetDefaultCreateSettings(&surfaceCreateSettings);
+   surfaceCreateSettings.pixelFormat = format;
+   surfaceCreateSettings.width = WstLDBBufferGetWidth(buffer);
+   surfaceCreateSettings.height = WstLDBBufferGetHeight(buffer);
+   surfaceCreateSettings.pitch = WstLDBBufferGetStride(buffer);
+   surfaceCreateSettings.pMemory = NULL;
+   surfaceCreateSettings.pixelMemory = memoryHandle;
+   surfaceHandle = NEXUS_Surface_Create(&surfaceCreateSettings);
+   if (!surfaceHandle)
+   {
+      NEXUS_MemoryBlock_Free(memoryHandle);
+      return nullptr;
+   }
+
+   return surfaceHandle;
+}
+
+static void wstDestroyNexusSurfaceLDB( struct wl_ldb_buffer *buffer )
+{
+   auto ptr = static_cast<std::shared_ptr<NEXUS_Surface> *>(WstLDBBufferGetUserData(buffer));
+   delete ptr;
+}
+
+static std::shared_ptr<NEXUS_Surface> wstGetNexusSurfaceLDB( struct wl_ldb_buffer *buffer )
+{
+   void *data = WstLDBBufferGetUserData(buffer);
+   if (!data)
+   {
+      NEXUS_SurfaceHandle surfaceHandle = wstCreateNexusHandleLDB(buffer);
+      if (!surfaceHandle)
+         return nullptr;
+
+      std::shared_ptr<NEXUS_Surface> *ptr = nullptr;
+      try
+      {
+         auto deleter = [](NEXUS_SurfaceHandle surface)
+         {
+            if (!surface) return;
+            NEXUS_SurfaceCreateSettings settings;
+            NEXUS_Surface_GetCreateSettings(surface, &settings);
+            NEXUS_Surface_Destroy(surface);
+            if (settings.pixelMemory)
+               NEXUS_MemoryBlock_Free(settings.pixelMemory);
+         };
+         ptr = new std::shared_ptr<NEXUS_Surface>(surfaceHandle, deleter);
+      }
+      catch (...)
+      {
+         return nullptr;
+      }
+      WstLDBBufferSetUserData(buffer, ptr, wstDestroyNexusSurfaceLDB);
+      data = ptr;
+   }
+   return *static_cast<std::shared_ptr<NEXUS_Surface> *>(data);
+}
+
+static void wstRendererNXCommitLDB( WstRendererNX *renderer, WstRenderSurface *surface, struct wl_resource *resource )
+{
+   struct wl_ldb_buffer *buffer = WstLDBBufferGet(resource);
+   std::shared_ptr<NEXUS_Surface> ptr = buffer ? wstGetNexusSurfaceLDB(buffer) : nullptr;
+   if (ptr)
+   {
+      wstRendererNXCommitNexusSurface(renderer, surface, ptr);
+   }
+   else
+   {
+      printf("wstRendererNXCommitLDB: failed\n");
+      wl_resource_post_no_memory(resource);
+   }
+}
+#endif // ENABLE_LDBPROTOCOL
 
 static void wstRendererTerm( WstRenderer *renderer )
 {
@@ -669,6 +1236,7 @@ static void wstRendererUpdateScene( WstRenderer *renderer )
 
       if ( surface->surfacePending )
       {
+         wstBGBRelease(surface, surface->surfacePush);
          surface->surfacePush= surface->surfacePending;
          surface->surfacePending= 0;
          wstRendererPushSurface( rendererNX, surface );
@@ -718,7 +1286,6 @@ static void wstRendererSurfaceDestroy( WstRenderer *renderer, WstRenderSurface *
 static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *surface, struct wl_resource *resource )
 {
    WstRendererNX *rendererNX= (WstRendererNX*)renderer->renderer;
-   EGLint value;
 
    if ( resource )
    {
@@ -732,15 +1299,43 @@ static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *s
          wstRendererNXCommitSB( rendererNX, surface, resource );
       }
       #endif
-      #if defined (WESTEROS_HAVE_WAYLAND_EGL)
-      else if ( wl_egl_get_device_buffer( resource ) )
+      else if ( wstRendererNXCommitWlNexus( rendererNX, surface, resource ) )
       {
-         wstRendererNXCommitBNXS( rendererNX, surface, resource );
+         if ( surface->surfacePending )
+         {
+            /* No pre-release: wl_nexus surfaces are freed only when Nexus recycles them. */
+            surface->surfacePush= surface->surfacePending;
+            surface->surfacePending= 0;
+            wstRendererPushSurface( rendererNX, surface );
+         }
+      }
+      else if ( WstBGBBufferGet( resource ) )
+      {
+         wstRendererNXCommitBGB( rendererNX, surface, resource );
+         if ( surface->surfacePending )
+         {
+            wstBGBRelease(surface, surface->surfacePush);
+            surface->surfacePush= surface->surfacePending;
+            surface->surfacePending= 0;
+            wstRendererPushSurface( rendererNX, surface );
+         }
+      }
+      #ifdef ENABLE_LDBPROTOCOL
+      else if ( WstLDBBufferGet( resource ) )
+      {
+         wstRendererNXCommitLDB( rendererNX, surface, resource );
+         if ( surface->surfacePending )
+         {
+            surface->surfacePush= surface->surfacePending;
+            surface->surfacePending= 0;
+            wstRendererPushSurface( rendererNX, surface );
+         }
       }
       #endif
       else
       {
-         printf("wstRendererSurfaceCommit: unsupported buffer type\n");
+         printf("wstRendererSurfaceCommit: unsupported buffer type: class=%s\n",
+                wl_resource_get_class(resource));
       }
    }
    else
@@ -1070,6 +1665,10 @@ int renderer_init( WstRenderer *renderer, int argc, char **argv )
       renderer->surfaceSetZOrder= wstRendererSurfaceSetZOrder;
       renderer->surfaceGetZOrder= wstRendererSurfaceGetZOrder;
       renderer->delegateUpdateScene= wstRendererDelegateUpdateScene;
+      #ifdef ENABLE_LDBPROTOCOL
+      renderer->queryDmabufFormats= wstRendererQueryDmabufFormats;
+      renderer->queryDmabufModifiers= wstRendererQueryDmabufModifiers;
+      #endif
    }
    else
    {
