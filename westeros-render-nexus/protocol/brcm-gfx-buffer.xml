@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="brcm_gfx_buffer">
+  <copyright>
+    Copyright (C) 2022 Broadcom. The term "Broadcom" refers to Broadcom Limited
+    and/or its subsidiaries.
+  </copyright>
+
+  <interface name="brcm_gfx" version="2">
+
+    <enum name="flags">
+      <description summary="A bit mask of buffer flags.">
+        The combination of flags describe various buffer attributes.
+      </description>
+      <entry name="secure"        value="0x01" summary="this is a secure buffer"/>
+      <entry name="implicit_sync" value="0x02" summary="requires implicit synchronisation"/>
+      <!--  <entry name="..."     value="0x04" summary="..."/> -->
+      <!--  <entry name="..."     value="0x08" summary="..."/> -->
+    </enum>
+
+    <request name="buffer_create">
+      <description summary="Create a wl_buffer from given gfx buffer">
+        A wl_buffer object contains one of the swapchain buffers.
+      </description>
+      <arg name="id" type="new_id" interface="wl_buffer"/>
+      <arg name="format" type="uint" summary="NEXUS_PixelFormat"/>
+      <arg name="width" type="uint" summary="buffer width in pixels"/>
+      <arg name="height" type="uint" summary="buffer height in pixels"/>
+      <arg name="flags" type="uint" summary="a bitmask of enum flags"/>
+      <arg name="pitch" type="uint" summary="line pitch in bytes"/>
+      <arg name="size" type="uint" summary="total buffer size in bytes"/>
+      <arg name="memory" type="fd" summary="dma-buf PRIME fd"/>
+    </request>
+  </interface>
+</protocol>
+
