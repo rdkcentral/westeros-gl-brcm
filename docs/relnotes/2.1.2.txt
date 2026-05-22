@@ -10,7 +10,7 @@ Changes:
  
 * Bring up westeros-render-nexus
  
-Depedencies
+Dependencies
 ------------
 wayland >= 1.6.0
 libxkbcommon >= 0.8.3
