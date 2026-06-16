@@ -1,23 +1,5 @@
 #!/bin/bash
 
-#
-# If not stated otherwise in this file or this component's license file the
-# following copyright and licenses apply:
-#
-# Copyright 2020 RDK Management
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 #######################################
 # Westeros GL BRCM Build Script
 # Purpose: Build westeros-gl with L1 tests and/or Coverity analysis
@@ -47,6 +29,7 @@ BUILD_L1=false
 BUILD_COVERITY=false
 CLEAN_BUILD=false
 VERBOSE=false
+DEFAULT_BUILD=false
 JOBS=$(nproc 2>/dev/null || echo 4)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -109,6 +92,7 @@ EOF
 parse_args() {
     if [ $# -eq 0 ]; then
         log_info "No arguments provided. Building both L1 and Coverity by default."
+        DEFAULT_BUILD=true
         BUILD_L1=true
         BUILD_COVERITY=true
         return
@@ -154,11 +138,18 @@ parse_args() {
     done
 }
 
-disable_unavailable_l1() {
+preflight_check_l1() {
     if [ "$BUILD_L1" = true ] && [ ! -d "$L1_DIR" ]; then
-        log_warning "L1 directory not found at $L1_DIR"
-        log_warning "Skipping L1 build"
-        BUILD_L1=false
+        if [ "$DEFAULT_BUILD" = true ] && [ "$BUILD_COVERITY" = true ]; then
+            log_warning "L1 directory not found at $L1_DIR"
+            log_warning "Skipping L1 build and continuing with Coverity-only build"
+            BUILD_L1=false
+            return 0
+        fi
+
+        log_error "L1 test suite not found at $L1_DIR"
+        log_error "Add the top-level L1/ directory or run without --l1"
+        return 1
     fi
 }
 
@@ -474,7 +465,7 @@ main() {
     
     # Parse arguments
     parse_args "$@"
-    disable_unavailable_l1
+    preflight_check_l1 || exit 1
     
     # Display build configuration
     log_info "Build Configuration:"
@@ -517,4 +508,3 @@ main() {
 
 # Execute main
 main "$@"
-
