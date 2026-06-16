@@ -1,20 +1,23 @@
 #!/bin/bash
-#If not stated otherwise in this file or this component's LICENSE file the
-#following copyright and licenses apply:
+
 #
-#Copyright 2016 RDK Management
+# If not stated otherwise in this file or this component's license file the
+# following copyright and licenses apply:
 #
-#Licensed under the Apache License, Version 2.0 (the "License");
-#you may not use this file except in compliance with the License.
-#You may obtain a copy of the License at
+# Copyright 2020 RDK Management
 #
-#http://www.apache.org/licenses/LICENSE-2.0
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-#Unless required by applicable law or agreed to in writing, software
-#distributed under the License is distributed on an "AS IS" BASIS,
-#WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#See the License for the specific language governing permissions and
-#limitations under the License.
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 #######################################
 # Westeros GL BRCM Build Script
 # Purpose: Build westeros-gl with L1 tests and/or Coverity analysis
@@ -52,6 +55,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 L1_BUILD_DIR="$PROJECT_ROOT/L1/build"
 COVERITY_BUILD_DIR="$PROJECT_ROOT/build-coverity"
 COVERITY_OUTPUT_DIR="$PROJECT_ROOT/coverity-output"
+
+# Feature directories
+L1_DIR="$PROJECT_ROOT/L1"
 
 # Log functions
 log_info() {
@@ -148,6 +154,14 @@ parse_args() {
     done
 }
 
+disable_unavailable_l1() {
+    if [ "$BUILD_L1" = true ] && [ ! -d "$L1_DIR" ]; then
+        log_warning "L1 directory not found at $L1_DIR"
+        log_warning "Skipping L1 build"
+        BUILD_L1=false
+    fi
+}
+
 # Clean build directories
 clean_builds() {
     log_step "Cleaning build directories..."
@@ -177,8 +191,8 @@ build_l1() {
     log_step "Building L1 Tests with Coverage"
     
     # Check if L1 directory exists
-    if [ ! -d "$PROJECT_ROOT/L1" ]; then
-        log_error "L1 directory not found at $PROJECT_ROOT/L1"
+    if [ ! -d "$L1_DIR" ]; then
+        log_error "L1 directory not found at $L1_DIR"
         return 1
     fi
     
@@ -460,6 +474,7 @@ main() {
     
     # Parse arguments
     parse_args "$@"
+    disable_unavailable_l1
     
     # Display build configuration
     log_info "Build Configuration:"
@@ -502,3 +517,4 @@ main() {
 
 # Execute main
 main "$@"
+
