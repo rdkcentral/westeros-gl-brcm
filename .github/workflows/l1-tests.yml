@@ -20,7 +20,7 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Detect L1 test suite
       id: l1_suite
@@ -98,21 +98,21 @@ jobs:
     
     - name: Upload test results
       if: always() && steps.l1_suite.outputs.available == 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ matrix.build_type }}-${{ matrix.coverage }}
         path: L1/build/test_results.xml
     
     - name: Upload coverage report (HTML)
       if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage-report-html
         path: L1/build/coverage_html/
     
     - name: Upload coverage report (LCOV)
       if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverage-report-lcov
         path: L1/build/coverage_filtered.info
