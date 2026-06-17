@@ -7,6 +7,9 @@ on:
     branches: [ main, develop ]
   workflow_dispatch:
 
+permissions:
+  contents: read    
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -73,7 +76,8 @@ jobs:
       if: steps.l1_suite.outputs.available == 'true'
       run: |
         cd L1/build
-        ./westeros_gl_l1_tests --gtest_output=xml:test_results.xml
+        ./westeros_gl_l1_tests --gtest_output=xml:westeros_gl_test_results.xml
+        ./westeros_renderer_l1_tests --gtest_output=xml:westeros_renderer_test_results.xml
     
     - name: Generate coverage report
       if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
@@ -101,7 +105,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ matrix.build_type }}-${{ matrix.coverage }}
-        path: L1/build/test_results.xml
+        path: |
+          L1/build/westeros_gl_test_results.xml
+          L1/build/westeros_renderer_test_results.xml
     
     - name: Upload coverage report (HTML)
       if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
@@ -126,10 +132,12 @@ jobs:
         fi
 
         cd L1/build
-        if [ -f test_results.xml ]; then
-          echo "Test results summary:"
-          grep -E "tests=|failures=|errors=" test_results.xml || true
-        fi
+        for results_file in westeros_gl_test_results.xml westeros_renderer_test_results.xml; do
+          if [ -f "$results_file" ]; then
+            echo "Test results summary for $results_file:"
+            grep -E "tests=|failures=|errors=" "$results_file" || true
+          fi
+        done
 
   build-summary:
     needs: build-and-test

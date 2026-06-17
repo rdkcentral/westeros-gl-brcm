@@ -349,7 +349,7 @@ generate_coverage_report() {
               --print-summary \
               --txt coverage/coverage_summary.txt \
               --html-details coverage/coverage_gcovr.html \
-              --branches 2>&1 | tee coverage/coverage_summary.txt
+              --branches
         
         log_success "Coverage summary generated: $L1_BUILD_DIR/coverage/coverage_summary.txt"
     else
