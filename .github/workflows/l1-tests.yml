@@ -1,0 +1,154 @@
+name: L1 Tests and Coverage
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+permissions:
+  contents: read    
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+        coverage: [ON, OFF]
+        exclude:
+          - build_type: Release
+            coverage: ON
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Detect L1 test suite
+      id: l1_suite
+      run: |
+        if [ -d L1 ] && [ -f L1/CMakeLists.txt ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          echo "L1 test suite detected"
+        else
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Skipping L1 execution because the top-level L1/ test suite is not present."
+        fi
+    
+    - name: Install dependencies
+      if: steps.l1_suite.outputs.available == 'true'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential pkg-config \
+          libgtest-dev libgmock-dev libwayland-dev libegl1-mesa-dev \
+          lcov gcovr bc
+    
+    - name: Display build configuration
+      if: steps.l1_suite.outputs.available == 'true'
+      run: |
+        echo "Build Type: ${{ matrix.build_type }}"
+        echo "Coverage: ${{ matrix.coverage }}"
+        cmake --version
+        gcc --version
+    
+    - name: Create build directory
+      if: steps.l1_suite.outputs.available == 'true'
+      run: |
+        cd L1
+        mkdir -p build
+    
+    - name: Configure CMake
+      if: steps.l1_suite.outputs.available == 'true'
+      run: |
+        cd L1/build
+        cmake -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+              -DENABLE_COVERAGE=${{ matrix.coverage }} \
+              ..
+    
+    - name: Build
+      if: steps.l1_suite.outputs.available == 'true'
+      run: |
+        cd L1/build
+        make -j$(nproc)
+    
+    - name: Run tests
+      if: steps.l1_suite.outputs.available == 'true'
+      run: |
+        cd L1/build
+        ./westeros_gl_l1_tests --gtest_output=xml:westeros_gl_test_results.xml
+        ./westeros_renderer_l1_tests --gtest_output=xml:westeros_renderer_test_results.xml
+    
+    - name: Generate coverage report
+      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
+      run: |
+        cd L1/build
+        make coverage
+    
+    - name: Check coverage threshold
+      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
+      run: |
+        cd L1/build
+        COVERAGE=$(lcov --summary coverage_filtered.info 2>&1 | grep "lines" | awk '{print $2}' | sed 's/%//')
+        echo "Code coverage: $COVERAGE%"
+        
+        THRESHOLD=70
+        if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+          echo "::error::Code coverage $COVERAGE% is below threshold $THRESHOLD%"
+          exit 1
+        else
+          echo "::notice::Code coverage $COVERAGE% meets threshold $THRESHOLD%"
+        fi
+    
+    - name: Upload test results
+      if: always() && steps.l1_suite.outputs.available == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ matrix.build_type }}-${{ matrix.coverage }}
+        path: |
+          L1/build/westeros_gl_test_results.xml
+          L1/build/westeros_renderer_test_results.xml
+    
+    - name: Upload coverage report (HTML)
+      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-html
+        path: L1/build/coverage_html/
+    
+    - name: Upload coverage report (LCOV)
+      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-lcov
+        path: L1/build/coverage_filtered.info
+    
+    - name: Display test summary
+      if: always()
+      run: |
+        if [ "${{ steps.l1_suite.outputs.available }}" != "true" ]; then
+          echo "L1 test suite not present. Skipping test summary."
+          exit 0
+        fi
+
+        cd L1/build
+        for results_file in westeros_gl_test_results.xml westeros_renderer_test_results.xml; do
+          if [ -f "$results_file" ]; then
+            echo "Test results summary for $results_file:"
+            grep -E "tests=|failures=|errors=" "$results_file" || true
+          fi
+        done
+
+  build-summary:
+    needs: build-and-test
+    runs-on: ubuntu-22.04
+    if: always()
+    
+    steps:
+    - name: Display summary
+      run: |
+        echo "=========================================="
+        echo "Build and Test Summary"
+        echo "=========================================="
+        echo "All test configurations completed"
+        echo "Check individual job results for details"
