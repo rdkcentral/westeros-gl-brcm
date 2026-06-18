@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read    
 
+env:
+  LOCAL_ACT: ${{ github.actor == 'nektos/act' && 'true' || 'false' }}
+
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
@@ -76,8 +79,16 @@ jobs:
       if: steps.l1_suite.outputs.available == 'true'
       run: |
         cd L1/build
-        ./westeros_gl_l1_tests --gtest_output=xml:westeros_gl_test_results.xml
-        ./westeros_renderer_l1_tests --gtest_output=xml:westeros_renderer_test_results.xml
+        gl_status=0
+        renderer_status=0
+
+        ./westeros_gl_l1_tests --gtest_output=xml:westeros_gl_test_results.xml || gl_status=$?
+        ./westeros_renderer_l1_tests --gtest_output=xml:westeros_renderer_test_results.xml || renderer_status=$?
+
+        if [ "$gl_status" -ne 0 ] || [ "$renderer_status" -ne 0 ]; then
+          echo "::error::L1 test failures detected (gl=$gl_status, renderer=$renderer_status)"
+          exit 1
+        fi
     
     - name: Generate coverage report
       if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
@@ -101,7 +112,7 @@ jobs:
         fi
     
     - name: Upload test results
-      if: always() && steps.l1_suite.outputs.available == 'true'
+      if: always() && steps.l1_suite.outputs.available == 'true' && env.LOCAL_ACT != 'true'
       uses: actions/upload-artifact@v4
       with:
         name: test-results-${{ matrix.build_type }}-${{ matrix.coverage }}
@@ -110,18 +121,23 @@ jobs:
           L1/build/westeros_renderer_test_results.xml
     
     - name: Upload coverage report (HTML)
-      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
+      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON' && env.LOCAL_ACT != 'true'
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-html
         path: L1/build/coverage_html/
     
     - name: Upload coverage report (LCOV)
-      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON'
+      if: steps.l1_suite.outputs.available == 'true' && matrix.coverage == 'ON' && env.LOCAL_ACT != 'true'
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-lcov
         path: L1/build/coverage_filtered.info
+
+    - name: Skip artifact upload notice
+      if: always() && steps.l1_suite.outputs.available == 'true' && env.LOCAL_ACT == 'true'
+      run: |
+        echo "::notice::Skipping artifact upload in local act runs because ACTIONS_RUNTIME_TOKEN is unavailable."
     
     - name: Display test summary
       if: always()
