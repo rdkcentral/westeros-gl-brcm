@@ -37,6 +37,7 @@
 #include "westeros-gl-brcm-version.h"
 
 #include <vector>
+#include <set>
 
 #define DISPLAY_SAFE_BORDER_PERCENT (5)
 
@@ -59,6 +60,9 @@ typedef struct _WstGLCtx
    bool gfxEventCreated;
    BKNI_EventHandle gfxEvent;
    bool secureGraphics;
+#ifdef L1_TESTING
+   bool terminated;
+#endif
 } WstGLCtx;
 
 typedef struct _WstGLDisplayCtx
@@ -83,6 +87,10 @@ static int ctxCount= 0;
 static pthread_mutex_t g_mutex= PTHREAD_MUTEX_INITIALIZER;
 static WstGLDisplayCtx *gDisplayCtx= 0;
 static std::vector<WstGLSizeCBInfo> gSizeListeners;
+static std::set<void*> gAllocatedPixmaps;
+#ifdef L1_TESTING
+static std::set<WstGLCtx*> gValidContexts;
+#endif
 
 static bool useSecureGraphics( void )
 {
@@ -197,12 +205,27 @@ WstGLCtx* WstGLInit()
    if ( ctx )
    {
       pthread_mutex_lock( &g_mutex );
+#ifdef L1_TESTING
+      gValidContexts.insert(ctx);
+#endif
       if ( ctxCount == 0 )
       {
          NxClient_GetDefaultJoinSettings( &joinSettings );
          snprintf( joinSettings.name, NXCLIENT_MAX_NAME, "%s", "westeros-gl");
          rc= NxClient_Join( &joinSettings );
          printf("WstGLInit: NxClient_Join rc=%X as %s\n", rc, joinSettings.name );
+         
+         if ( rc != NEXUS_SUCCESS )
+         {
+            printf("WstGLInit: NxClient_Join failed\n");
+#ifdef L1_TESTING
+            gValidContexts.erase(ctx);
+#endif
+            free( ctx );
+            ctx= 0;
+            pthread_mutex_unlock( &g_mutex );
+            goto exit;
+         }
 
          gDisplayCtx= (WstGLDisplayCtx*)calloc( 1, sizeof(WstGLDisplayCtx));
          if ( gDisplayCtx )
@@ -295,6 +318,7 @@ WstGLCtx* WstGLInit()
       wstGLGetDisplaySize();
    }
    
+exit:
    return ctx;
 }
 
@@ -302,6 +326,10 @@ void WstGLTerm( WstGLCtx *ctx )
 {
    if ( ctx )
    {
+#ifdef L1_TESTING
+      ctx->terminated = true;
+#endif
+      
       pthread_mutex_lock( &g_mutex );
       for ( std::vector<WstGLSizeCBInfo>::iterator it= gSizeListeners.begin();
             it != gSizeListeners.end();
@@ -348,14 +376,37 @@ void WstGLTerm( WstGLCtx *ctx )
                }
                NxClient_Free(&gDisplayCtx->allocResults);
                free( gDisplayCtx );
+               gDisplayCtx= 0;
             }
             NxClient_Uninit();
          }
       }
       pthread_mutex_unlock( &g_mutex );
+      
+#ifdef L1_TESTING
+      pthread_mutex_lock( &g_mutex );
+      gValidContexts.erase(ctx);
+      pthread_mutex_unlock( &g_mutex );
+#endif
+      
       free( ctx );
    }
 }
+
+#ifdef L1_TESTING
+// Helper function to validate context (L1 testing only)
+static bool isValidContext( WstGLCtx *ctx )
+{
+   if ( !ctx )
+      return false;
+      
+   pthread_mutex_lock( &g_mutex );
+   bool valid = (gValidContexts.find(ctx) != gValidContexts.end());
+   pthread_mutex_unlock( &g_mutex );
+   
+   return valid;
+}
+#endif
 
 #if defined(__cplusplus)
 extern "C"
@@ -388,7 +439,11 @@ bool WstGLGetDisplayInfo( WstGLCtx *ctx, WstGLDisplayInfo *displayInfo )
 {
    bool result= false;
 
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && displayInfo )
+#else
    if ( ctx && displayInfo )
+#endif
    {
       wstGLGetDisplaySize();
 
@@ -419,7 +474,11 @@ bool WstGLGetDisplaySafeArea( WstGLCtx *ctx, int *x, int *y, int *w, int *h )
    bool result= false;
    WstGLDisplayInfo di;
 
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && x && y && w && h )
+#else
    if ( ctx && x && y && w && h )
+#endif
    {
       if ( WstGLGetDisplayInfo( ctx, &di ) )
       {
@@ -440,7 +499,11 @@ bool WstGLAddDisplaySizeListener( WstGLCtx *ctx, void *userData, WstGLDisplaySiz
    bool result= false;
    bool found= false;
 
-   if ( ctx )
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && listener )
+#else
+   if ( ctx && listener )
+#endif
    {
       pthread_mutex_lock( &g_mutex );
 
@@ -448,7 +511,7 @@ bool WstGLAddDisplaySizeListener( WstGLCtx *ctx, void *userData, WstGLDisplaySiz
             it != gSizeListeners.end();
             ++it )
       {
-         if ( (*it).listener == listener )
+         if ( (*it).listener == listener && (*it).userData == userData )
          {
             found= true;
             break;
@@ -483,7 +546,11 @@ bool WstGLRemoveDisplaySizeListener( WstGLCtx *ctx, WstGLDisplaySizeCallback lis
    bool result= false;
    bool found= false;
 
-   if ( ctx )
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && listener )
+#else
+   if ( ctx && listener )
+#endif
    {
       pthread_mutex_lock( &g_mutex );
 
@@ -517,7 +584,11 @@ void* WstGLCreateNativeWindow( WstGLCtx *ctx, int x, int y, int width, int heigh
 {
    void *nativeWindow= 0;
 
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) )
+#else
    if ( ctx )
+#endif
    {
       NXPL_NativeWindowInfo windowInfo;
 
@@ -531,6 +602,11 @@ void* WstGLCreateNativeWindow( WstGLCtx *ctx, int x, int y, int width, int heigh
       windowInfo.zOrder= 10000000;
    
       nativeWindow= (void*)NXPL_CreateNativeWindow( &windowInfo );
+      
+      if ( !nativeWindow )
+      {
+         printf("WstGLCreateNativeWindow: NXPL_CreateNativeWindow failed\n");
+      }
    }
    
    return nativeWindow;   
@@ -542,7 +618,11 @@ void* WstGLCreateNativeWindow( WstGLCtx *ctx, int x, int y, int width, int heigh
  */
 void WstGLDestroyNativeWindow( WstGLCtx *ctx, void *nativeWindow )
 {
-   if ( ctx )
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && nativeWindow )
+#else
+   if ( ctx && nativeWindow )
+#endif
    {
       NXPL_DestroyNativeWindow( nativeWindow );
    }
@@ -567,7 +647,11 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
 {
    bool result= false;
     
-   if ( ctx )
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && nativeBuffer && nativePixmap )
+#else
+   if ( ctx && nativeBuffer && nativePixmap )
+#endif
    {
       NEXUS_Error rc;
       NEXUS_SurfaceStatus surfaceStatusIn;
@@ -602,6 +686,12 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
       else
       {
          npm= (WstNativePixmap*)calloc( 1, sizeof(WstNativePixmap) );
+         if ( npm )
+         {
+            pthread_mutex_lock( &g_mutex );
+            gAllocatedPixmaps.insert( npm );
+            pthread_mutex_unlock( &g_mutex );
+         }
       }
 
       if ( npm )
@@ -726,11 +816,23 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
  */
 void WstGLGetNativePixmapDimensions( WstGLCtx *ctx, void *nativePixmap, int *width, int *height )
 {
-   if ( ctx )
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && nativePixmap && width && height )
+#else
+   if ( ctx && nativePixmap && width && height )
+#endif
    {
-      WstNativePixmap *npm= (WstNativePixmap*)nativePixmap;
-      *width= npm->width;
-      *height= npm->height;
+      pthread_mutex_lock( &g_mutex );
+      
+      // Validate that this is actually an allocated pixmap to prevent crashes from fake pointers
+      if ( gAllocatedPixmaps.find( nativePixmap ) != gAllocatedPixmaps.end() )
+      {
+         WstNativePixmap *npm= (WstNativePixmap*)nativePixmap;
+         *width= npm->width;
+         *height= npm->height;
+      }
+      
+      pthread_mutex_unlock( &g_mutex );
    }
 }
 
@@ -740,20 +842,38 @@ void WstGLGetNativePixmapDimensions( WstGLCtx *ctx, void *nativePixmap, int *wid
  */
 void WstGLReleaseNativePixmap( WstGLCtx *ctx, void *nativePixmap )
 {
-   if ( ctx )
+#ifdef L1_TESTING
+   if ( isValidContext(ctx) && nativePixmap )
+#else
+   if ( ctx && nativePixmap )
+#endif
    {
-      WstNativePixmap *npm= (WstNativePixmap*)nativePixmap;
-      if ( npm->pixmap )
+      pthread_mutex_lock( &g_mutex );
+      
+      // Check if this pixmap was allocated and not already freed
+      if ( gAllocatedPixmaps.find( nativePixmap ) != gAllocatedPixmaps.end() )
       {
-         #if defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
-         NEXUS_Surface_Destroy((NEXUS_SurfaceHandle)npm->pixmap);
-         #else
-         NXPL_DestroyCompatiblePixmap(ctx->nxplHandle, npm->pixmap );
-         #endif
-         npm->pixmap= 0;
-         npm->surface= 0;
+         gAllocatedPixmaps.erase( nativePixmap );
+         pthread_mutex_unlock( &g_mutex );
+         
+         WstNativePixmap *npm= (WstNativePixmap*)nativePixmap;
+         if ( npm->pixmap )
+         {
+            #if defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
+            NEXUS_Surface_Destroy((NEXUS_SurfaceHandle)npm->pixmap);
+            #else
+            NXPL_DestroyCompatiblePixmap(ctx->nxplHandle, npm->pixmap );
+            #endif
+            npm->pixmap= 0;
+            npm->surface= 0;
+         }
+         free( npm );
       }
-      free( npm );
+      else
+      {
+         pthread_mutex_unlock( &g_mutex );
+         // Pixmap already freed or invalid - ignore safely
+      }
    }
 }
 
@@ -766,11 +886,25 @@ void* WstGLGetEGLNativePixmap( WstGLCtx *ctx, void *nativePixmap )
 {
    void* eglPixmap= 0;
    
-   if ( nativePixmap )
+#ifdef L1_TESTING
+   if ( !isValidContext(ctx) || !nativePixmap )
+#else
+   if ( !ctx || !nativePixmap )
+#endif
+   {
+      return 0;
+   }
+   
+   pthread_mutex_lock( &g_mutex );
+   
+   // Validate that this is actually an allocated pixmap to prevent crashes from fake pointers
+   if ( gAllocatedPixmaps.find( nativePixmap ) != gAllocatedPixmaps.end() )
    {
       WstNativePixmap *npm= (WstNativePixmap*)nativePixmap;
       eglPixmap= npm->pixmap;
    }
+   
+   pthread_mutex_unlock( &g_mutex );
    
    return eglPixmap;
 }
