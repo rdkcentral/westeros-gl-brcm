@@ -116,6 +116,10 @@ target_link_libraries(westeros_gl_l1_tests
     dl
 )
 
+if(ENABLE_COVERAGE)
+    target_link_libraries(westeros_gl_l1_tests gcov)
+endif()
+
 target_compile_definitions(westeros_gl_l1_tests PRIVATE
     L1_TESTING=1
     NEXUS_PLATFORM_VERSION_MAJOR=18
@@ -143,6 +147,10 @@ target_link_libraries(westeros_renderer_l1_tests
     pthread
     dl
 )
+
+if(ENABLE_COVERAGE)
+    target_link_libraries(westeros_renderer_l1_tests gcov)
+endif()
 
 target_compile_definitions(westeros_renderer_l1_tests PRIVATE
     L1_TESTING=1
