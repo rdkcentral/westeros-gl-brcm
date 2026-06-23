@@ -67,6 +67,7 @@ typedef bool (*fn_GetWlBufferSettings_t)(struct wl_resource *buffer, BEGL_Buffer
 #include "westeros-linux-dmabuf.h"
 #endif
 #include "brcm-gfx-buffer.h"
+#include "../westeros-gl/westeros-gl-log.h"
 
 #include "nexus_config.h"
 #include "nexus_platform.h"
@@ -237,7 +238,7 @@ static void wstRendererPushSurface( WstRendererNX *renderer, WstRenderSurface *s
                                           true );
       if ( rc )
       {
-         printf("westeros_renderer_nexus: NEXUS_SurfaceClient_PushSurface rc %d\n", rc);
+         ERROR("westeros_renderer_nexus: NEXUS_SurfaceClient_PushSurface rc %d\n", rc);
       }
 
       surface->surfacePush= 0;
@@ -327,17 +328,17 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
       NxClient_GetDefaultJoinSettings( &joinSettings );
       snprintf( joinSettings.name, NXCLIENT_MAX_NAME, "%s", "westeros_renderer_nexus");
       rc= NxClient_Join( &joinSettings );
-      printf("westeros_render_nexus: wstRendererNXCreate: NxClient_Join rc=%X as %s\n", rc, joinSettings.name );
+      INFO("westeros_render_nexus: wstRendererNXCreate: NxClient_Join rc=%X as %s\n", rc, joinSettings.name );
       if ( NEXUS_SUCCESS != rc )
       {
-         printf("WstGLInit: NxClient_Join failed: rc=%X\n", rc);
+         ERROR("WstGLInit: NxClient_Join failed: rc=%X\n", rc);
          free( rendererNX );
          rendererNX= 0;
          goto exit;
       }
 
       rendererNX->secureGraphics= useSecureGraphics();
-      printf("westeros_render_nexus: secure graphics: %d\n", rendererNX->secureGraphics);
+      INFO("westeros_render_nexus: secure graphics: %d\n", rendererNX->secureGraphics);
       if ( rendererNX->secureGraphics )
       {
          NxClient_DisplaySettings displaySettings;
@@ -349,13 +350,13 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
          rc= NxClient_SetDisplaySettings( &displaySettings );
          if ( rc != NEXUS_SUCCESS )
          {
-            printf("WstGLInit: NxClient_SetDisplaySettings failed: rc=%X\n", rc);
+            ERROR("WstGLInit: NxClient_SetDisplaySettings failed: rc=%X\n", rc);
          }
       }
 
       rendererNX->bgb = WstBGBInit(renderer->display);
       if (!rendererNX->bgb)
-         printf("WstGLInit: WstBGBInit failed.\n");
+         WARNING("WstGLInit: WstBGBInit failed.\n");
       /* wl_nexus is registered via eglBindWaylandDisplayWL below.
        * BCM V3D EGL only exposes EGL_WL_bind_wayland_display AFTER an EGL context is
        * active.  Create a minimal surfaceless context (EGL_KHR_surfaceless_context is
@@ -367,11 +368,11 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
          EGLint major, minor;
          if ( !eglInitialize( rendererNX->eglDisplay, &major, &minor ) )
          {
-            printf("westeros_render_nexus: eglInitialize failed: %X\n", eglGetError() );
+            ERROR("westeros_render_nexus: eglInitialize failed: %X\n", eglGetError() );
          }
          else
          {
-            printf("westeros_render_nexus: eglInitialize OK: major=%d minor=%d eglDisplay=%p\n", major, minor, rendererNX->eglDisplay);
+            INFO("westeros_render_nexus: eglInitialize OK: major=%d minor=%d eglDisplay=%p\n", major, minor, rendererNX->eglDisplay);
          }
 
          /* Create a surfaceless GLES2 context to expose display-level extensions. */
@@ -390,16 +391,16 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
             if ( rendererNX->eglContext && rendererNX->eglContext != EGL_NO_CONTEXT )
             {
                EGLBoolean mc = eglMakeCurrent(rendererNX->eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, rendererNX->eglContext);
-               printf("westeros_render_nexus: surfaceless EGL context: %p makeCurrent=%d\n", rendererNX->eglContext, mc);
+               DEBUG("westeros_render_nexus: surfaceless EGL context: %p makeCurrent=%d\n", rendererNX->eglContext, mc);
             }
             else
             {
-               printf("westeros_render_nexus: eglCreateContext failed: %X\n", eglGetError());
+               ERROR("westeros_render_nexus: eglCreateContext failed: %X\n", eglGetError());
             }
          }
          else
          {
-            printf("westeros_render_nexus: eglChooseConfig found no configs\n");
+            ERROR("westeros_render_nexus: eglChooseConfig found no configs\n");
          }
 
          const char *extensions = eglQueryString( rendererNX->eglDisplay, EGL_EXTENSIONS );
@@ -408,13 +409,13 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
             rendererNX->eglBindWaylandDisplayWL = (PFNEGLBINDWAYLANDDISPLAYWL)eglGetProcAddress("eglBindWaylandDisplayWL");
             rendererNX->eglUnbindWaylandDisplayWL = (PFNEGLUNBINDWAYLANDDISPLAYWL)eglGetProcAddress("eglUnbindWaylandDisplayWL");
             rendererNX->eglQueryWaylandBufferWL = (PFNEGLQUERYWAYLANDBUFFERWL)eglGetProcAddress("eglQueryWaylandBufferWL");
-            printf("westeros_render_nexus: eglBindWaylandDisplayWL=%p\n", rendererNX->eglBindWaylandDisplayWL);
+            DEBUG("westeros_render_nexus: eglBindWaylandDisplayWL=%p\n", rendererNX->eglBindWaylandDisplayWL);
 
             if ( rendererNX->eglBindWaylandDisplayWL &&
                  rendererNX->eglUnbindWaylandDisplayWL &&
                  rendererNX->eglQueryWaylandBufferWL )
             {
-               printf("calling eglBindWaylandDisplayWL with eglDisplay %p and wayland display %p\n", rendererNX->eglDisplay, renderer->display);
+               DEBUG("calling eglBindWaylandDisplayWL with eglDisplay %p and wayland display %p\n", rendererNX->eglDisplay, renderer->display);
                EGLBoolean rc = rendererNX->eglBindWaylandDisplayWL( rendererNX->eglDisplay, renderer->display );
                if ( rc )
                {
@@ -422,16 +423,16 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
                }
                else
                {
-                  printf("eglBindWaylandDisplayWL failed: %X\n", eglGetError());
+                  ERROR("eglBindWaylandDisplayWL failed: %X\n", eglGetError());
                }
             }
          }
          else
          {
-            printf("westeros_render_nexus: EGL_WL_bind_wayland_display NOT in extensions (extensions: %s)\n",
+            WARNING("westeros_render_nexus: EGL_WL_bind_wayland_display NOT in extensions (extensions: %s)\n",
                    extensions ? extensions : "(null)");
          }
-         printf("have wayland-egl: %d\n", rendererNX->haveWaylandEGL);
+         INFO("have wayland-egl: %d\n", rendererNX->haveWaylandEGL);
       }
 
       /* Resolve BCM V3D format conversion functions from RTLD_DEFAULT scope. */
@@ -443,12 +444,12 @@ static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
          (fn_GetWlBufferSettings_t)dlsym(RTLD_DEFAULT, "GetWlBufferSettings");
       rendererNX->fnCloneMemoryFromDescriptor =
          (fn_CloneMemoryFromDescriptor_t)dlsym(RTLD_DEFAULT, "NEXUS_Platform_CloneMemoryFromDescriptor");
-      printf("westeros_render_nexus: LFMTToNexus=%p GetWlBufferSettings=%p CloneMemory=%p\n",
+      DEBUG("westeros_render_nexus: LFMTToNexus=%p GetWlBufferSettings=%p CloneMemory=%p\n",
              (void*)rendererNX->fnLFMTToNexus,
              (void*)rendererNX->fnGetWlBufferSettings,
              (void*)rendererNX->fnCloneMemoryFromDescriptor);
       if (!rendererNX->fnCloneMemoryFromDescriptor)
-         printf("westeros_render_nexus: WARNING: NEXUS_Platform_CloneMemoryFromDescriptor NOT found via dlsym — direct call will be used\n");
+         WARNING("westeros_render_nexus: WARNING: NEXUS_Platform_CloneMemoryFromDescriptor NOT found via dlsym — direct call will be used\n");
    }
 
 exit:
@@ -496,7 +497,7 @@ static WstRenderSurface* wstRenderNXCreateSurface( WstRendererNX *renderer )
       allocSettings.surfaceClient = 1;
       
       rc= NxClient_Alloc( &allocSettings, &surface->allocResults );
-      printf( "westeros_render_nexus: wstRendererNXCreateSurface: NxClient_Alloc rc=%X surfaceClientId=%X\n", 
+      INFO( "westeros_render_nexus: wstRendererNXCreateSurface: NxClient_Alloc rc=%X surfaceClientId=%X\n", 
               rc, surface->allocResults.surfaceClient[0].id );
 
       NxClient_GetSurfaceClientComposition(surface->allocResults.surfaceClient[0].id, &composition);
@@ -532,7 +533,7 @@ static WstRenderSurface* wstRenderNXCreateSurface( WstRendererNX *renderer )
 
       /* Create a surface client */
       surface->gfxSurfaceClient= NEXUS_SurfaceClient_Acquire(surface->allocResults.surfaceClient[0].id);
-      printf("westeros_render_nexus: wstRendererNXCreateSurface: gfxSurfaceClient %p\n", surface->gfxSurfaceClient );
+      DEBUG("westeros_render_nexus: wstRendererNXCreateSurface: gfxSurfaceClient %p\n", surface->gfxSurfaceClient );
 
       /* Setup displayed callback and event */
       NEXUS_SurfaceClient_GetSettings(surface->gfxSurfaceClient, &clientSettings);
@@ -766,7 +767,7 @@ static bool wstRendererNXCommitWlNexus( WstRendererNX *renderer, WstRenderSurfac
    int dmaFd = info.plane[0].fd;
    if ( dmaFd < 0 || info.descs[0].width == 0 || info.descs[0].height == 0 )
    {
-      printf("wstRendererNXCommitWlNexus: bad buffer info fd=%d w=%u h=%u\n",
+      ERROR("wstRendererNXCommitWlNexus: bad buffer info fd=%d w=%u h=%u\n",
              dmaFd, info.descs[0].width, info.descs[0].height);
       if ( dmaFd >= 0 ) close(dmaFd);
       return false;
@@ -774,7 +775,7 @@ static bool wstRendererNXCommitWlNexus( WstRendererNX *renderer, WstRenderSurfac
 
    if ( fcntl(dmaFd, F_GETFD) < 0 )
    {
-      printf("wstRendererNXCommitWlNexus: fd=%d invalid (errno=%d)\n", dmaFd, errno);
+      ERROR("wstRendererNXCommitWlNexus: fd=%d invalid (errno=%d)\n", dmaFd, errno);
       return false;
    }
 
@@ -787,7 +788,7 @@ static bool wstRendererNXCommitWlNexus( WstRendererNX *renderer, WstRenderSurfac
    close(dmaFd);
    if ( !MbHandle )
    {
-      printf("wstRendererNXCommitWlNexus: CloneMemoryFromDescriptor failed\n");
+      ERROR("wstRendererNXCommitWlNexus: CloneMemoryFromDescriptor failed\n");
       return false;
    }
 
@@ -822,7 +823,7 @@ static bool wstRendererNXCommitWlNexus( WstRendererNX *renderer, WstRenderSurfac
    NEXUS_SurfaceHandle nexusSurface = NEXUS_Surface_Create(&surfaceCreateSettings);
    if ( !nexusSurface )
    {
-      printf("wstRendererNXCommitWlNexus: NEXUS_Surface_Create failed (fmt=%d)\n",
+      ERROR("wstRendererNXCommitWlNexus: NEXUS_Surface_Create failed (fmt=%d)\n",
              (int)surfaceCreateSettings.pixelFormat);
       NEXUS_MemoryBlock_Free(MbHandle);
       return false;
@@ -896,7 +897,7 @@ static void wstRendererNXCommitBGB( WstRendererNX *renderer, WstRenderSurface *s
    }
    else
    {
-      printf("wstRendererNXCommitBGB: WstBGBBufferGet failed\n");
+      ERROR("wstRendererNXCommitBGB: WstBGBBufferGet failed\n");
    }
 }
 
@@ -934,7 +935,7 @@ static void wstRendererNXCommitNexusSurface( WstRendererNX *renderer, WstRenderS
    }
    else
    {
-      printf("wstRendererNXCommitNexusSurface: failed - no surface handle\n");
+      ERROR("wstRendererNXCommitNexusSurface: failed - no surface handle\n");
    }
 }
 
@@ -964,7 +965,7 @@ static void wstRendererQueryDmabufFormats( WstRenderer *renderer, int **formats,
    int *theFormats= (int*)malloc(sizeof(supportedFormats));
    if (!theFormats)
    {
-      printf("wstRendererQueryDmabufFormats: failed to get memory\n");
+      ERROR("wstRendererQueryDmabufFormats: failed to get memory\n");
       return;
    }
 
@@ -1042,7 +1043,7 @@ static void wstRendererQueryDmabufModifiers( WstRenderer *renderer, int format, 
    uint64_t *theModifiers= (uint64_t*)calloc(count, sizeof(uint64_t));
    if (!theModifiers)
    {
-      printf("wstRendererQueryDmabufModifiers: failed to alloc memory\n");
+      ERROR("wstRendererQueryDmabufModifiers: failed to alloc memory\n");
       return;
    }
 
@@ -1198,7 +1199,7 @@ static void wstRendererNXCommitLDB( WstRendererNX *renderer, WstRenderSurface *s
    }
    else
    {
-      printf("wstRendererNXCommitLDB: failed\n");
+      ERROR("wstRendererNXCommitLDB: failed\n");
       wl_resource_post_no_memory(resource);
    }
 }
@@ -1334,7 +1335,7 @@ static void wstRendererSurfaceCommit( WstRenderer *renderer, WstRenderSurface *s
       #endif
       else
       {
-         printf("wstRendererSurfaceCommit: unsupported buffer type: class=%s\n",
+         WARNING("wstRendererSurfaceCommit: unsupported buffer type: class=%s\n",
                 wl_resource_get_class(resource));
       }
    }
@@ -1378,7 +1379,7 @@ static bool wstRendererSurfaceGetVisible( WstRenderer *renderer, WstRenderSurfac
 
       if(isVisible != composition.visible)
       {
-         printf("westeros_render_nexus: %s query received before scene update, returning surface->visible=%d, composition.visible=%d\n", __FUNCTION__, surface->visible, composition.visible);
+         DEBUG("westeros_render_nexus: %s query received before scene update, returning surface->visible=%d, composition.visible=%d\n", __FUNCTION__, surface->visible, composition.visible);
       }
       
       *visible= isVisible;
@@ -1643,7 +1644,7 @@ int renderer_init( WstRenderer *renderer, int argc, char **argv )
    if ( displayName )
    {
       rc= -1;
-      printf("unsupported argument: --display: Nexus renderer does not support nested composition to a wayland display\n");
+      WARNING("unsupported argument: --display: Nexus renderer does not support nested composition to a wayland display\n");
       goto exit;
    }
 
