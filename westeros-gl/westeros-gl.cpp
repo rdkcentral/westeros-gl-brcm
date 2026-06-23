@@ -84,7 +84,7 @@ static int ctxCount= 0;
 static pthread_mutex_t g_mutex= PTHREAD_MUTEX_INITIALIZER;
 static WstGLDisplayCtx *gDisplayCtx= 0;
 static std::vector<WstGLSizeCBInfo> gSizeListeners;
-int gLogLevel= 0;
+static bool gLogLevelInitialized= false;
 
 static bool useSecureGraphics( void )
 {
@@ -192,10 +192,14 @@ WstGLCtx* WstGLInit()
    NEXUS_Error rc= NEXUS_SUCCESS;
    NxClient_JoinSettings joinSettings;
    NEXUS_Graphics2DOpenSettings gfxOpenSettings;
-   const char *dbgEnv= getenv("WESTEROS_GL_DEBUG");
-   if ( dbgEnv )
+   if ( !gLogLevelInitialized )
    {
-      gLogLevel= atoi(dbgEnv);
+      const char *dbgEnv= getenv("WESTEROS_GL_DEBUG");
+      if ( dbgEnv )
+      {
+         gLogLevel= atoi(dbgEnv);
+      }
+      gLogLevelInitialized= true;
    }
 
    INFO("Westeros GL version: " WST_GL_BRCM_VERSION_FMT, WST_GL_BRCM_VERSION );
@@ -241,7 +245,7 @@ WstGLCtx* WstGLInit()
             }
             else
             {
-               ERROR("WstGLInit: NxClient_Alloc rc=%X", rc);
+               ERROR("WstGLInit: NxClient_Alloc rc=%X\n", rc);
             }
          }
       }

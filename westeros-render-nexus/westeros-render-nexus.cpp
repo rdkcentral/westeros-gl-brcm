@@ -115,6 +115,8 @@ typedef NEXUS_MemoryBlockHandle (*fn_CloneMemoryFromDescriptor_t)(int fd);
 #define DEFAULT_SURFACE_HEIGHT (0)
 #define NUM_SURFACES (2)
 
+static bool gLogLevelInitialized= false;
+
 struct _WstRenderSurface
 {
    int x;
@@ -314,7 +316,17 @@ static bool wstRendererAllocSurfaces( WstRendererNX *renderer, WstRenderSurface 
 static WstRendererNX* wstRendererNXCreate( WstRenderer *renderer )
 {
    WstRendererNX *rendererNX= 0;
-   
+
+   if ( !gLogLevelInitialized )
+   {
+      const char *dbgEnv= getenv("WESTEROS_GL_DEBUG");
+      if ( dbgEnv )
+      {
+         gLogLevel= atoi(dbgEnv);
+      }
+      gLogLevelInitialized= true;
+   }
+
    rendererNX= (WstRendererNX*)calloc( 1, sizeof(WstRendererNX) );
    if ( rendererNX )
    {

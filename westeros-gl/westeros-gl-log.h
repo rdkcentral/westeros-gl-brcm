@@ -30,7 +30,7 @@
  *   3 = + DEBUG
  *   4 = + TRACE
  */
-extern int gLogLevel;
+static int gLogLevel= 0;
 
 static inline void wstLog( int level, const char *fmt, ... )
 {
