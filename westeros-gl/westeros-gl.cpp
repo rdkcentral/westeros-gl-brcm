@@ -785,4 +785,3 @@ void* WstGLGetEGLNativePixmap( WstGLCtx *ctx, void *nativePixmap )
    
    return eglPixmap;
 }
-
