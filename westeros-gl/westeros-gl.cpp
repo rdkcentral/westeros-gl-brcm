@@ -35,6 +35,7 @@
 #include "default_nexus.h"
 #include "nxclient.h"
 #include "westeros-gl-brcm-version.h"
+#include "westeros-gl-log.h"
 
 #include <vector>
 
@@ -83,6 +84,7 @@ static int ctxCount= 0;
 static pthread_mutex_t g_mutex= PTHREAD_MUTEX_INITIALIZER;
 static WstGLDisplayCtx *gDisplayCtx= 0;
 static std::vector<WstGLSizeCBInfo> gSizeListeners;
+static bool gLogLevelInitialized= false;
 
 static bool useSecureGraphics( void )
 {
@@ -123,14 +125,14 @@ static void wstGLGetDisplaySize( void )
          const char *env= 0;
          gDisplayCtx->displayWidth= scStatus.display.framebuffer.width;
          gDisplayCtx->displayHeight= scStatus.display.framebuffer.height;
-         printf("WstGLGetDisplaySize: display %dx%d\n", gDisplayCtx->displayWidth, gDisplayCtx->displayHeight);
+         INFO("WstGLGetDisplaySize: display %dx%d\n", gDisplayCtx->displayWidth, gDisplayCtx->displayHeight);
          env= getenv("WESTEROS_GL_GRAPHICS_SD_USE_720");
          if ( !env &&
               (gDisplayCtx->displayWidth == 720) &&
               (gDisplayCtx->displayHeight == 480) )
          {
             gDisplayCtx->displayWidth= 640;
-            printf("WstGLGetDisplaySize: using SD display %dx%d\n", gDisplayCtx->displayWidth, gDisplayCtx->displayHeight);
+            INFO("WstGLGetDisplaySize: using SD display %dx%d\n", gDisplayCtx->displayWidth, gDisplayCtx->displayHeight);
          }
       }
    }
@@ -190,8 +192,17 @@ WstGLCtx* WstGLInit()
    NEXUS_Error rc= NEXUS_SUCCESS;
    NxClient_JoinSettings joinSettings;
    NEXUS_Graphics2DOpenSettings gfxOpenSettings;
+   if ( !gLogLevelInitialized )
+   {
+      const char *dbgEnv= getenv("WESTEROS_GL_DEBUG");
+      if ( dbgEnv )
+      {
+         gLogLevel= atoi(dbgEnv);
+      }
+      gLogLevelInitialized= true;
+   }
 
-   printf("Westeros GL version: " WST_GL_BRCM_VERSION_FMT, WST_GL_BRCM_VERSION );
+   INFO("Westeros GL version: " WST_GL_BRCM_VERSION_FMT, WST_GL_BRCM_VERSION );
 
    ctx= (WstGLCtx*)calloc( 1, sizeof(WstGLCtx) );
    if ( ctx )
@@ -202,7 +213,7 @@ WstGLCtx* WstGLInit()
          NxClient_GetDefaultJoinSettings( &joinSettings );
          snprintf( joinSettings.name, NXCLIENT_MAX_NAME, "%s", "westeros-gl");
          rc= NxClient_Join( &joinSettings );
-         printf("WstGLInit: NxClient_Join rc=%X as %s\n", rc, joinSettings.name );
+         INFO("WstGLInit: NxClient_Join rc=%X as %s\n", rc, joinSettings.name );
 
          gDisplayCtx= (WstGLDisplayCtx*)calloc( 1, sizeof(WstGLDisplayCtx));
          if ( gDisplayCtx )
@@ -224,17 +235,17 @@ WstGLCtx* WstGLInit()
                   rc= NEXUS_SurfaceClient_SetSettings( gDisplayCtx->surfaceClient, &settings );
                   if ( rc != NEXUS_SUCCESS )
                   {
-                     printf("WstGLInit: NEXUS_SurfaceClient_SetSettings failed: rc=%X\n", rc);
+                     ERROR("WstGLInit: NEXUS_SurfaceClient_SetSettings failed: rc=%X\n", rc);
                   }
                }
                else
                {
-                  printf("WstGLInit: NEXUS_SurfaceClient_Acquire failed\n");
+                  ERROR("WstGLInit: NEXUS_SurfaceClient_Acquire failed\n");
                }
             }
             else
             {
-               printf("WstGLInit: NxClient_Alloc rc=%X", rc);
+               ERROR("WstGLInit: NxClient_Alloc rc=%X\n", rc);
             }
          }
       }
@@ -244,13 +255,13 @@ WstGLCtx* WstGLInit()
       #if ! defined (WESTEROS_HAVE_BRCM_WAYLAND_EGL)
       NXPL_RegisterNexusDisplayPlatform( &ctx->nxplHandle, 0 );
       #endif
-      printf("WstGLInit: nxplHandle %p\n", ctx->nxplHandle );
+      DEBUG("WstGLInit: nxplHandle %p\n", ctx->nxplHandle );
       
       BKNI_CreateEvent( &ctx->gfxEvent );
       ctx->gfxEventCreated= true;
       
       ctx->secureGraphics= useSecureGraphics();
-      printf("WstGLInit: secure graphics: %d\n", ctx->secureGraphics);
+      INFO("WstGLInit: secure graphics: %d\n", ctx->secureGraphics);
       if ( ctx->secureGraphics )
       {
          NxClient_DisplaySettings displaySettings;
@@ -262,7 +273,7 @@ WstGLCtx* WstGLInit()
          rc= NxClient_SetDisplaySettings( &displaySettings );
          if ( rc != NEXUS_SUCCESS )
          {
-            printf("WstGLInit: NxClient_SetDisplaySettings failed: rc=%X\n", rc);
+            ERROR("WstGLInit: NxClient_SetDisplaySettings failed: rc=%X\n", rc);
          }
       }
 
@@ -644,7 +655,7 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
                 }
                 else
                 {
-                    printf("WstGLGetNativePixmap: NXPL_CreateCompatiblePixmapEXT failed\n");
+                    ERROR("WstGLGetNativePixmap: NXPL_CreateCompatiblePixmapEXT failed\n");
                     free( npm );
                     npm= 0;
                 }
@@ -681,7 +692,7 @@ bool WstGLGetNativePixmap( WstGLCtx *ctx, void *nativeBuffer, void **nativePixma
             if ( !NXPL_CreateCompatiblePixmap(ctx->nxplHandle, &npm->pixmap, &npm->surface, &pixmapInfo) )
             #endif
             {
-               printf("WstGLGetNativePixmap: NXPL_CreateCompatiblePixmapEXT failed\n");
+               ERROR("WstGLGetNativePixmap: NXPL_CreateCompatiblePixmapEXT failed\n");
                free( npm );
                npm= 0;
             }

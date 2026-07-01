@@ -2,6 +2,21 @@
 
 All notable changes to this project are listed below.
 
+## 2.1.3 - 2026-06-23
+Tag: 2.1.3
+
+### Changes
+- Coverity for westeros-gl-brcm
+- Westeros GL logs are not logged in any file
+
+### Dependencies
+- wayland >= 1.6.0
+- libxkbcommon >= 0.8.3
+- xkeyboard-config >= 2.18
+- gstreamer >= 1.10.4
+- EGL >= 1.4
+- GLES >= 2.0
+
 ## 2.1.2 - 2026-05-15
 Tag: 2.1.2
 
