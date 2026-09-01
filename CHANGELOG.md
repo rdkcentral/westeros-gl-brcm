@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed below.
 
+## 2.1.4 - 2026-09-01
+Tag: 2.1.4
+
+### Changes
+- Increase the log level to 2 from 0
+
 ## 2.1.3 - 2026-06-23
 Tag: 2.1.3
 
