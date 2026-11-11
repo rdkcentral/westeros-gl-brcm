@@ -35,6 +35,8 @@ AM_CFLAGS = -DUSE_WESTEROS $(NEXUS_CFLAGS) $(NXCLIENT_CFLAGS) -I$(ROCKFORD_TOP)/
 
 AM_LDFLAGS = 
 
+WESTEROS_LIBRARY_VERSION_FLAGS = -version-number $(WESTEROS_LT_VERSION)
+
 if ENABLE_BRCM_WAYLANDEGL
 AM_CFLAGS += -DWESTEROS_HAVE_BRCM_WAYLAND_EGL
 AM_LDFLAGS += -lwlpl
@@ -50,6 +52,7 @@ libwesteros_gl_la_CXXFLAGS= $(AM_CFLAGS) -Wno-deprecated-declarations
 
 libwesteros_gl_la_LDFLAGS= \
    $(AM_LDFLAGS) \
+   $(WESTEROS_LIBRARY_VERSION_FLAGS) \
    -lwayland-egl \
    -lpthread \
    ${NEXUS_LD_LIBRARIES}
