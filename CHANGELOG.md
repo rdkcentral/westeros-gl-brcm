@@ -2,6 +2,18 @@
 
 All notable changes to this project are listed below.
 
+## 2.1.5 - 2026-11-17
+Tag: 2.1.5
+
+### Changes
+- RDKEMW-13175 L1 test suite for Westeros-gl-brcm
+
+## 2.1.4 - 2026-09-01
+Tag: 2.1.4
+
+### Changes
+- Increase the log level to 2 from 0
+
 ## 2.1.3 - 2026-06-23
 Tag: 2.1.3
 
